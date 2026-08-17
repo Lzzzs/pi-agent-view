@@ -1,0 +1,19 @@
+{
+  "name": "pi-agent-view",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A minimal terminal-native Pi session switcher",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.2",
+    "@earendil-works/pi-tui": "^0.84.2",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
