@@ -56,8 +56,19 @@ async function showBoard(ctx: ExtensionCommandContext, state: AgentViewStateStor
   let selectedId = (await state.getLastSelectedSessionId()) ?? ctx.sessionManager.getSessionId();
   while (true) {
     const sessions = await provider.list();
-    const action = await ctx.ui.custom<BoardAction>((tui, theme, _keybindings, done) =>
-      new SessionBoard(sessions, selectedId, theme, done, () => tui.requestRender()),
+    const action = await ctx.ui.custom<BoardAction>(
+      (tui, theme, _keybindings, done) =>
+        new SessionBoard(sessions, selectedId, theme, done, () => tui.requestRender(), () => tui.terminal.rows),
+      {
+        overlay: true,
+        overlayOptions: {
+          width: "100%",
+          maxHeight: "100%",
+          row: 0,
+          col: 0,
+          margin: 0,
+        },
+      },
     );
 
     if (!action || action.type === "close") return;

@@ -10,7 +10,8 @@ see session status → open a session → work → ← → return to the board
 
 ## Features
 
-- Starts directly in the terminal-only Session Board when you run `pi`
+- Starts directly in a full-terminal Session Board when you run `pi`
+- Uses the full terminal height to show as many sessions as possible
 - No browser, HTTP server, desktop app, or transcript copy
 - Real Pi session resume through Pi's `switchSession()` API
 - Keyboard-first navigation: `↑`/`↓`, `j`/`k`, `Enter`, `p`, `r`, and `Esc`
