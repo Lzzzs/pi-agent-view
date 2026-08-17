@@ -14,6 +14,7 @@ see session status → type a new task or resume a session → work → ← → 
 - Uses the supplied Pi mark as a compact terminal-native logo (works without image-protocol support)
 - A focused task input starts a **new** real Pi session with `Enter`
 - Shows workspace metadata and grouped `Pinned` / `Working` / `Awaiting input` / `Completed` sessions
+- Select a group and use empty `Enter` to expand or collapse it
 - Uses the full terminal height to show as many sessions as possible
 - No browser, HTTP server, desktop app, or transcript copy
 - Real Pi session creation and resume through Pi's `newSession()` and `switchSession()` APIs
@@ -66,20 +67,21 @@ Press `Esc` to close it and return to the current session. Open it again at any 
 ```
 
 ```text
+
   █▀█   Pi Agents View · SESSION BOARD
   █▀ █  Workspace  /Users/me/code/project
         Sessions   1 working · 2 awaiting input · 18 completed
 
-  Pinned  1
-  > ◆ ● recorder-multi-tab                         project  now
-  Working  1
-      ● eslint-fix                                  project  2m
-  Completed  18
-      · qianfan-config                              project  1h
+    ▾ Pinned  1
+  >   recorder-multi-tab              ● working  project  now
+    ▾ Working  1
+      eslint-fix                       ● working  project  2m
+    ▾ Completed  18
+      qianfan-config                   · done     project  1h
 ────────────────────────────────────────────────────────────────
   › Describe a task to start a new session
 ────────────────────────────────────────────────────────────────
-  Enter starts task · empty Enter opens selection · ↑↓ select
+  Enter starts task · empty Enter opens session / toggles group · ↑↓ select
 ```
 
 | Key | Action |
@@ -87,7 +89,7 @@ Press `Esc` to close it and return to the current session. Open it again at any 
 | Type a task, then `Enter` | Start a clean Pi session and send it the task |
 | `↑` | Previous session |
 | `↓` | Next session |
-| Empty `Enter` | Resume the selected Pi session |
+| Empty `Enter` | Resume the selected session, or expand/collapse a selected group |
 | `Alt+P` | Pin or unpin the selected session |
 | `Alt+R` | Rename the selected session |
 | `Esc` | Close the board |

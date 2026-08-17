@@ -13,14 +13,16 @@ export interface BoardMeta {
   cwd: string;
 }
 
+type GroupKey = "pinned" | "working" | "idle" | "done";
+
 type DisplayRow =
-  | { type: "section"; label: string; count: number }
-  | { type: "session"; session: PiSessionItem };
+  | { type: "section"; key: string; group: GroupKey; label: string; count: number; expanded: boolean }
+  | { type: "session"; key: string; session: PiSessionItem };
 
 // Terminal-native rendering of assets/pi-logo-on-dark.svg. Upper-half blocks
 // compress its four pixel rows into two terminal rows, preserving its aspect ratio.
 const PI_LOGO = ["█▀█ ", "█▀ █"] as const;
-const TOP_ROWS = 3;
+const TOP_ROWS = 5;
 const BOTTOM_ROWS = 4;
 const MIN_PANEL_HEIGHT = TOP_ROWS + BOTTOM_ROWS + 1;
 const MAX_PROMPT_LENGTH = 2_000;
@@ -32,8 +34,9 @@ const MAX_PROMPT_LENGTH = 2_000;
 export class SessionBoard implements Component {
   public focused = false;
 
-  private selectedIndex: number;
+  private selectedKey: string;
   private prompt = "";
+  private readonly collapsedGroups = new Set<GroupKey>();
 
   constructor(
     private readonly sessions: PiSessionItem[],
@@ -44,8 +47,10 @@ export class SessionBoard implements Component {
     private readonly onChange: () => void,
     private readonly getTerminalRows: () => number,
   ) {
-    const restoredIndex = selectedId ? sessions.findIndex((session) => session.id === selectedId) : -1;
-    this.selectedIndex = restoredIndex >= 0 ? restoredIndex : 0;
+    this.selectedKey =
+      selectedId && sessions.some((session) => session.id === selectedId)
+        ? sessionRowKey(selectedId)
+        : sectionRowKey(this.groups()[0]?.key ?? "pinned");
   }
 
   handleInput(data: string): void {
@@ -55,12 +60,10 @@ export class SessionBoard implements Component {
     }
     if (matchesKey(data, Key.up)) {
       this.move(-1);
-      this.onChange();
       return;
     }
     if (matchesKey(data, Key.down)) {
       this.move(1);
-      this.onChange();
       return;
     }
     if (matchesKey(data, "alt+p")) {
@@ -87,8 +90,11 @@ export class SessionBoard implements Component {
     }
     if (matchesKey(data, Key.enter)) {
       const task = this.prompt.trim();
-      if (task) this.done({ type: "new", prompt: task });
-      else this.runSelected("open");
+      if (task) {
+        this.done({ type: "new", prompt: task });
+      } else {
+        this.openOrToggleSelected();
+      }
       return;
     }
 
@@ -104,22 +110,23 @@ export class SessionBoard implements Component {
 
     const listRows = Math.max(1, height - TOP_ROWS - BOTTOM_ROWS);
     const lines = [
+      this.row("", width),
       this.row(this.brandLine(), width),
       this.row(this.workspaceLine(width), width),
       this.row(this.summaryLine(), width),
+      this.row("", width),
     ];
 
     const displayRows = this.getDisplayRows();
-    const selectedId = this.sessions[this.selectedIndex]?.id;
-    const selectedRowIndex = displayRows.findIndex((row) => row.type === "session" && row.session.id === selectedId);
+    const selectedRowIndex = displayRows.findIndex((row) => row.key === this.selectedKey);
     const { start, end } = visibleRange(selectedRowIndex, displayRows.length, listRows);
 
     for (let index = start; index < end; index++) {
       const displayRow = displayRows[index]!;
       lines.push(
         displayRow.type === "section"
-          ? this.sectionRow(displayRow.label, displayRow.count, width)
-          : this.sessionRow(displayRow.session, displayRow.session.id === selectedId, width),
+          ? this.sectionRow(displayRow, displayRow.key === this.selectedKey, width)
+          : this.sessionRow(displayRow.session, displayRow.key === this.selectedKey, width),
       );
     }
     while (lines.length < TOP_ROWS + listRows) lines.push(this.row("", width));
@@ -134,31 +141,62 @@ export class SessionBoard implements Component {
   invalidate(): void {}
 
   private move(delta: number): void {
-    if (this.sessions.length === 0) return;
-    this.selectedIndex = Math.max(0, Math.min(this.sessions.length - 1, this.selectedIndex + delta));
+    const rows = this.getDisplayRows();
+    if (rows.length === 0) return;
+    const currentIndex = rows.findIndex((row) => row.key === this.selectedKey);
+    const nextIndex = Math.max(0, Math.min(rows.length - 1, (currentIndex < 0 ? 0 : currentIndex) + delta));
+    this.selectedKey = rows[nextIndex]!.key;
+    this.onChange();
   }
 
-  private runSelected(type: "open" | "pin" | "rename"): void {
-    const selected = this.sessions[this.selectedIndex];
-    if (selected) this.done({ type, id: selected.id });
+  private openOrToggleSelected(): void {
+    const selected = this.getSelectedRow();
+    if (!selected) return;
+    if (selected.type === "section") {
+      if (this.collapsedGroups.has(selected.group)) this.collapsedGroups.delete(selected.group);
+      else this.collapsedGroups.add(selected.group);
+      this.onChange();
+      return;
+    }
+    this.done({ type: "open", id: selected.session.id });
   }
 
-  private getDisplayRows(): DisplayRow[] {
-    const groups: Array<{ label: string; sessions: PiSessionItem[] }> = [
-      { label: "Pinned", sessions: this.sessions.filter((session) => session.pinned) },
-      { label: "Working", sessions: this.sessions.filter((session) => !session.pinned && session.status === "working") },
+  private runSelected(type: "pin" | "rename"): void {
+    const selected = this.getSelectedRow();
+    if (selected?.type === "session") this.done({ type, id: selected.session.id });
+  }
+
+  private getSelectedRow(): DisplayRow | undefined {
+    return this.getDisplayRows().find((row) => row.key === this.selectedKey);
+  }
+
+  private groups(): Array<{ key: GroupKey; label: string; sessions: PiSessionItem[] }> {
+    const groups: Array<{ key: GroupKey; label: string; sessions: PiSessionItem[] }> = [
+      { key: "pinned", label: "Pinned", sessions: this.sessions.filter((session) => session.pinned) },
+      { key: "working", label: "Working", sessions: this.sessions.filter((session) => !session.pinned && session.status === "working") },
       {
+        key: "idle",
         label: "Awaiting input",
         sessions: this.sessions.filter((session) => !session.pinned && session.status === "idle"),
       },
-      { label: "Completed", sessions: this.sessions.filter((session) => !session.pinned && session.status === "done") },
+      { key: "done", label: "Completed", sessions: this.sessions.filter((session) => !session.pinned && session.status === "done") },
     ];
+    return groups.filter((group) => group.sessions.length > 0);
+  }
 
-    return groups.flatMap(({ label, sessions }) =>
-      sessions.length === 0
-        ? []
-        : ([{ type: "section", label, count: sessions.length }, ...sessions.map((session) => ({ type: "session", session }))] as DisplayRow[]),
-    );
+  private getDisplayRows(): DisplayRow[] {
+    return this.groups().flatMap(({ key: group, label, sessions }) => {
+      const expanded = !this.collapsedGroups.has(group);
+      const section: DisplayRow = {
+        type: "section",
+        key: sectionRowKey(group),
+        group,
+        label,
+        count: sessions.length,
+        expanded,
+      };
+      return expanded ? [section, ...sessions.map((session) => ({ type: "session", key: sessionRowKey(session.id), session }) as DisplayRow)] : [section];
+    });
   }
 
   private brandLine(): string {
@@ -188,22 +226,26 @@ export class SessionBoard implements Component {
     return `  ${this.theme.bold(PI_LOGO[row] ?? "    ")}  `;
   }
 
-  private sectionRow(label: string, count: number, width: number): string {
-    return this.row(`  ${this.theme.fg("muted", this.theme.bold(label))} ${this.theme.fg("dim", String(count))}`, width);
+  private sectionRow(section: Extract<DisplayRow, { type: "section" }>, selected: boolean, width: number): string {
+    const pointer = selected ? this.theme.fg("accent", ">") : " ";
+    const disclosure = section.expanded ? "▾" : "▸";
+    const content = `  ${pointer} ${this.theme.fg("muted", disclosure)} ${this.theme.fg("muted", this.theme.bold(section.label))} ${this.theme.fg("dim", String(section.count))}`;
+    return this.row(content, width, selected);
   }
 
   private sessionRow(session: PiSessionItem, selected: boolean, width: number): string {
-    const pointer = selected ? this.theme.fg("accent", "> ") : "  ";
-    const pin = session.pinned ? this.theme.fg("accent", "◆ ") : "  ";
-    const status = statusSymbol(session.status, this.theme);
-    const prefix = `  ${pointer}${pin}${status} `;
+    // The session title starts in precisely the same column as the section
+    // label above it; its status belongs in the right-hand metadata column.
+    const pointer = selected ? this.theme.fg("accent", ">") : " ";
+    const prefix = `  ${pointer}   `;
+    const status = statusDisplay(session.status, this.theme);
     const age = relativeAge(session.updatedAt);
     const project = projectName(session.cwd);
-    const detail = width >= 64 ? `${project}  ${age}` : age;
-    const nameWidth = Math.max(1, width - visibleWidth(prefix) - visibleWidth(detail) - 4);
+    const detail = width >= 72 ? `${status.symbol} ${status.label}  ${this.theme.fg("dim", project)}  ${this.theme.fg("dim", age)}` : `${status.symbol} ${status.label}  ${this.theme.fg("dim", age)}`;
+    const nameWidth = Math.max(1, width - visibleWidth(prefix) - visibleWidth(detail) - 2);
     const name = truncateToWidth(session.name, nameWidth);
-    const gap = " ".repeat(Math.max(2, width - visibleWidth(prefix) - visibleWidth(name) - visibleWidth(detail) - 2));
-    return this.row(`${prefix}${name}${gap}${this.theme.fg("dim", detail)}`, width, selected);
+    const gap = " ".repeat(Math.max(2, width - visibleWidth(prefix) - visibleWidth(name) - visibleWidth(detail)));
+    return this.row(`${prefix}${name}${gap}${detail}`, width, selected);
   }
 
   private inputRow(width: number): string {
@@ -222,7 +264,7 @@ export class SessionBoard implements Component {
   }
 
   private helpLabel(): string {
-    return "  Enter starts task · empty Enter opens selection · ↑↓ select · Alt-P pin · Alt-R rename · Esc close";
+    return "  Enter starts task · empty Enter opens session / toggles group · ↑↓ select · Alt-P pin · Alt-R rename · Esc close";
   }
 
   private row(content: string, width: number, selected = false): string {
@@ -230,14 +272,22 @@ export class SessionBoard implements Component {
   }
 }
 
-function statusSymbol(status: PiSessionItem["status"], theme: Theme): string {
+function sectionRowKey(group: GroupKey): string {
+  return `group:${group}`;
+}
+
+function sessionRowKey(id: string): string {
+  return `session:${id}`;
+}
+
+function statusDisplay(status: PiSessionItem["status"], theme: Theme): { symbol: string; label: string } {
   switch (status) {
     case "working":
-      return theme.fg("accent", "●");
+      return { symbol: theme.fg("accent", "●"), label: theme.fg("accent", "working") };
     case "idle":
-      return theme.fg("muted", "○");
+      return { symbol: theme.fg("muted", "○"), label: theme.fg("muted", "waiting") };
     case "done":
-      return theme.fg("success", "·");
+      return { symbol: theme.fg("success", "·"), label: theme.fg("success", "done") };
   }
 }
 
