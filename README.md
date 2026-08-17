@@ -16,12 +16,13 @@ see session status → type a new task or resume a session → work → ← → 
 - Shows workspace metadata and grouped `Pinned` / `Working` / `Awaiting input` / `Completed` sessions
 - Select a group and use empty `Enter` to expand or collapse it
 - Uses the full terminal height to show as many sessions as possible
-- No browser, HTTP server, desktop app, or transcript copy
-- Real Pi session creation and resume through Pi's `newSession()` and `switchSession()` APIs
+- No browser, HTTP server, desktop app, PTY scraping, or transcript copying
+- One isolated `pi --mode rpc` worker per background session
+- Structured Pi RPC commands and live agent/message/tool/lifecycle events
 - Keyboard-first navigation with an always-ready task input
 - Persistent pins and display-name overrides
-- Lifecycle-backed `working` / `idle` / `done` states for Pi processes running the extension
-- `←` (with `Ctrl+←` fallback) returns to the board only when the normal prompt editor is empty and idle
+- Lifecycle-backed `starting` / `working` / `idle` / `failed` states
+- `←` returns to the Board even while the current session is working; detach never aborts the task
 
 ## Requirements
 
@@ -89,11 +90,11 @@ Press `Esc` to close it and return to the current session. Open it again at any 
 | Type a task, then `Enter` | Start a clean Pi session and send it the task |
 | `↑` | Previous session |
 | `↓` | Next session |
-| Empty `Enter` | Resume the selected session, or expand/collapse a selected group |
+| Empty `Enter` | Attach the selected session, or expand/collapse a selected group |
 | `Alt+P` | Pin or unpin the selected session |
 | `Alt+R` | Rename the selected session |
 | `Esc` | Close the board |
-| `←` / `Ctrl+←` | Return to the board when the normal editor is empty and Pi is idle |
+| `←` / `Ctrl+←` | Detach to the Board when the editor is empty, including while Pi is working |
 
 Pins, custom names, selection, and lightweight runtime records are stored in
 `~/.pi/agents-view/state.json`. Existing state from the earlier
@@ -101,26 +102,53 @@ Pins, custom names, selection, and lightweight runtime records are stored in
 JSONL files remain the source of truth for transcripts, existing titles, and
 session data.
 
+## Background runtime model
+
+```text
+               Session Board
+                    │
+        ┌───────────┼───────────┐
+        │           │           │
+        ▼           ▼           ▼
+    Runtime A   Runtime B   Runtime C
+        │           │           │
+    Session A   Session B   Session C
+      working     working       idle
+```
+
+A background session owns one isolated Pi RPC child process and one session JSONL file. The attach view consumes `get_messages` plus live RPC events; sending input uses `prompt` and uses steering semantics when the worker is already running.
+
+`detach()` only releases the terminal view. It does **not** call RPC `abort`, send a signal, clear queues, or dispose the worker. Workers are stopped when the owning Pi process quits; V1 does not install a daemon.
+
+Pi's native `AgentSessionRuntime.switchSession()` aborts the active response before replacement, and `InteractiveMode` does not expose a public attach/detach data-source API. That is why background sessions use the structured RPC attach view instead of forcing a busy native runtime to switch.
+
+Pi session JSONL has no built-in multi-writer lock. Foreground and background runtimes therefore acquire cooperative ownership records under `~/.pi/agents-view/claims/`. Claim creation uses an atomic filesystem link, records both manager and writer PIDs, and is held until the writer exits. The extension blocks both a background attach and a native switch when another live Pi Agents View process owns that session.
+
 ## Session status
 
-- **working** — Pi emitted `agent_start` for that session and has not settled.
-- **idle** — A live Pi process running this extension owns the session, but its agent is not active.
-- **done** — No live Agent View runtime record exists for the session; this includes historical sessions.
+- **starting** — RPC worker is starting and resolving its session identity.
+- **working** — Pi emitted `agent_start` and has not emitted `agent_settled`.
+- **idle** — The runtime is alive and accepts a new prompt.
+- **failed** — The last agent run failed or its worker crashed; sibling runtimes continue.
+- **done** — No live Agent View runtime owns the historical session.
 
-The extension uses Pi lifecycle events rather than session-file modification times to identify `working`. Pi currently has no public cross-process activity registry, so a Pi process without this extension cannot report live status to the board.
+Status is driven by Pi RPC/native lifecycle events rather than session-file modification time.
 
 ## Scope and limitations
 
-Pi Agents View intentionally does not implement cloning, forking, a web UI, or a separate chat renderer. Starting a task creates an actual clean Pi session; opening a row resumes the actual selected Pi session.
+Pi Agents View intentionally does not implement cloning, forking, a web UI, daemon persistence, or machine-reboot recovery. Background extension dialogs are cancelled rather than guessed when no modal is attached. Ownership is cooperative: a separate Pi process that does not load this extension cannot be forced to honor its claim files.
 
-Pi `0.84.2` does not expose public mouse row hit-testing to extensions. The board is therefore keyboard-first; it does not parse raw mouse sequences or modify Pi core.
+Pi `0.84.2` does not expose public mouse row hit-testing to extensions. The board is keyboard-first; it does not parse raw mouse sequences or modify Pi core.
 
 ## Development
 
 ```bash
 npm install
 npm run typecheck
+npm test
 ```
+
+The test suite verifies detach invariants, three concurrent structured workers, foreground/background ownership claims, stale-lock recovery, startup cancellation, crash recovery/isolation, runtime-only Board discovery, and installed-Pi RPC startup.
 
 ## License
 

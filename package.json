@@ -4,13 +4,14 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "A minimal terminal-native Pi session switcher",
+  "description": "A terminal-native Pi session board with isolated background runtimes",
   "keywords": ["pi-package", "pi-extension", "terminal", "session-switcher"],
   "pi": {
     "extensions": ["./index.ts"]
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-transform-types --test tests/*.test.ts"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

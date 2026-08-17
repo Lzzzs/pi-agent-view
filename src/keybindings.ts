@@ -13,7 +13,9 @@ export function installBackToBoardEditor(pi: ExtensionAPI, ctx: ExtensionContext
 
   ctx.ui.setEditorComponent((tui, theme, keybindings) =>
     new BackToBoardEditor(tui, theme, keybindings, () => {
-      if (!ctx.isIdle() || ctx.hasPendingMessages() || ctx.ui.getEditorText().length !== 0) return false;
+      if (ctx.ui.getEditorText().length !== 0) return false;
+      // Extension commands execute immediately even while Pi is streaming.
+      // Opening the Board is a UI detach; it must never abort the active run.
       pi.sendUserMessage("/agents", { expandPromptTemplates: true });
       return true;
     }),

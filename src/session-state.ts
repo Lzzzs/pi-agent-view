@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 export type SessionStatus = "working" | "idle" | "done";
 export type LiveSessionStatus = Exclude<SessionStatus, "done">;
@@ -139,27 +139,30 @@ export class AgentViewStateStore {
     await mkdir(dirname(this.filePath), { recursive: true });
 
     for (let attempt = 0; attempt < LOCK_RETRIES; attempt++) {
-      try {
-        const lock = await open(lockPath, "wx");
-        try {
-          await lock.writeFile(JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
-        } finally {
-          await lock.close();
-        }
-
+      if (await recoverOrWaitForStateReaper(lockPath)) {
+        await delay(LOCK_RETRY_DELAY_MS);
+        continue;
+      }
+      const owner: StateLockOwner = { pid: process.pid, token: randomUUID(), createdAt: Date.now() };
+      if (await tryCreateStateLock(lockPath, owner)) {
         try {
           return await operation();
         } finally {
-          await rm(lockPath, { force: true });
+          if (await lockHasToken(lockPath, owner.token)) await rm(lockPath, { force: true });
         }
-      } catch (error: unknown) {
-        if ((error as { code?: unknown }).code !== "EEXIST") throw error;
-        if (await isStaleLock(lockPath)) {
-          await rm(lockPath, { force: true });
-          continue;
-        }
-        await delay(LOCK_RETRY_DELAY_MS);
       }
+
+      const existing = await readStateLock(lockPath);
+      if (existing && isProcessAlive(existing.pid)) {
+        await delay(LOCK_RETRY_DELAY_MS);
+        continue;
+      }
+      if (!existing && !(await isMalformedLockStale(lockPath))) {
+        await delay(LOCK_RETRY_DELAY_MS);
+        continue;
+      }
+      await tryReapStateLock(lockPath, existing);
+      await delay(LOCK_RETRY_DELAY_MS);
     }
 
     throw new Error(`Timed out waiting for Agent View state lock: ${lockPath}`);
@@ -250,16 +253,106 @@ function pruneSession(state: AgentViewStateFile, id: string): void {
   if (!session.name && !session.pinned && !session.runtimes) delete state.sessions[id];
 }
 
-async function isStaleLock(lockPath: string): Promise<boolean> {
+interface StateLockOwner {
+  pid: number;
+  token: string;
+  createdAt: number;
+}
+
+async function tryCreateStateLock(lockPath: string, owner: StateLockOwner): Promise<boolean> {
+  const candidate = `${lockPath}.candidate-${process.pid}-${randomUUID()}`;
+  await writeFile(candidate, JSON.stringify(owner), { encoding: "utf8", flag: "wx" });
   try {
-    const [raw, info] = await Promise.all([readFile(lockPath, "utf8"), stat(lockPath)]);
-    const payload = JSON.parse(raw) as { pid?: unknown };
-    if (typeof payload.pid === "number" && isProcessAlive(payload.pid)) return false;
-    return Date.now() - info.mtimeMs > LOCK_STALE_AFTER_MS || !isProcessAlive(payload.pid as number);
+    await link(candidate, lockPath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  } finally {
+    await rm(candidate, { force: true });
+  }
+}
+
+async function readStateLock(lockPath: string): Promise<StateLockOwner | undefined> {
+  try {
+    const payload = JSON.parse(await readFile(lockPath, "utf8")) as Partial<StateLockOwner>;
+    if (
+      typeof payload.pid !== "number" ||
+      !Number.isInteger(payload.pid) ||
+      payload.pid <= 0 ||
+      typeof payload.token !== "string" ||
+      !payload.token ||
+      typeof payload.createdAt !== "number"
+    ) {
+      return undefined;
+    }
+    return payload as StateLockOwner;
   } catch {
-    // A vanished or malformed lock is safe to reclaim.
+    return undefined;
+  }
+}
+
+async function tryReapStateLock(lockPath: string, observed: StateLockOwner | undefined): Promise<void> {
+  const generation = observed?.token ?? "malformed";
+  const reaperPath = `${lockPath}.reap-${generation}`;
+  const reaper: StateLockOwner = { pid: process.pid, token: randomUUID(), createdAt: Date.now() };
+  if (!(await tryCreateStateLock(reaperPath, reaper))) return;
+  try {
+    const current = await readStateLock(lockPath);
+    if (observed) {
+      if (current?.token === observed.token && !isProcessAlive(current.pid)) await rm(lockPath, { force: true });
+    } else if (!current && (await isMalformedLockStale(lockPath))) {
+      await rm(lockPath, { force: true });
+    }
+  } finally {
+    if (await lockHasToken(reaperPath, reaper.token)) await rm(reaperPath, { force: true });
+  }
+}
+
+async function recoverOrWaitForStateReaper(lockPath: string): Promise<boolean> {
+  const prefix = `${basename(lockPath)}.reap-`;
+  let markerName: string | undefined;
+  try {
+    markerName = (await readdir(dirname(lockPath))).find((name) => name.startsWith(prefix));
+  } catch {
+    return false;
+  }
+  if (!markerName) return false;
+
+  const markerPath = join(dirname(lockPath), markerName);
+  const takeoverMatch = markerName.match(/\.reap-takeover-(\d+)-/);
+  const markerOwner = takeoverMatch ? Number(takeoverMatch[1]) : (await readStateLock(markerPath))?.pid;
+  if (markerOwner !== undefined && isProcessAlive(markerOwner)) return true;
+  if (markerOwner === undefined && !(await isMalformedLockStale(markerPath))) return true;
+
+  const takeoverPath = `${lockPath}.reap-takeover-${process.pid}-${randomUUID()}`;
+  try {
+    await rename(markerPath, takeoverPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+  try {
+    const current = await readStateLock(lockPath);
+    if ((current && !isProcessAlive(current.pid)) || (!current && (await isMalformedLockStale(lockPath)))) {
+      await rm(lockPath, { force: true });
+    }
+  } finally {
+    await rm(takeoverPath, { force: true });
+  }
+  return true;
+}
+
+async function isMalformedLockStale(lockPath: string): Promise<boolean> {
+  try {
+    return Date.now() - (await stat(lockPath)).mtimeMs > LOCK_STALE_AFTER_MS;
+  } catch {
     return true;
   }
+}
+
+async function lockHasToken(lockPath: string, token: string): Promise<boolean> {
+  return (await readStateLock(lockPath))?.token === token;
 }
 
 function isProcessAlive(pid: unknown): boolean {

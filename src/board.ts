@@ -39,7 +39,7 @@ export class SessionBoard implements Component {
   private readonly collapsedGroups = new Set<GroupKey>();
 
   constructor(
-    private readonly sessions: PiSessionItem[],
+    private sessions: PiSessionItem[],
     selectedId: string | undefined,
     private readonly meta: BoardMeta,
     private readonly theme: Theme,
@@ -140,6 +140,12 @@ export class SessionBoard implements Component {
 
   invalidate(): void {}
 
+  setSessions(sessions: PiSessionItem[]): void {
+    this.sessions = sessions;
+    const rows = this.getDisplayRows();
+    if (!rows.some((row) => row.key === this.selectedKey)) this.selectedKey = rows[0]?.key ?? sectionRowKey("pinned");
+  }
+
   private move(delta: number): void {
     const rows = this.getDisplayRows();
     if (rows.length === 0) return;
@@ -173,13 +179,13 @@ export class SessionBoard implements Component {
   private groups(): Array<{ key: GroupKey; label: string; sessions: PiSessionItem[] }> {
     const groups: Array<{ key: GroupKey; label: string; sessions: PiSessionItem[] }> = [
       { key: "pinned", label: "Pinned", sessions: this.sessions.filter((session) => session.pinned) },
-      { key: "working", label: "Working", sessions: this.sessions.filter((session) => !session.pinned && session.status === "working") },
+      { key: "working", label: "Working", sessions: this.sessions.filter((session) => !session.pinned && isWorkingStatus(session.status)) },
       {
         key: "idle",
         label: "Awaiting input",
         sessions: this.sessions.filter((session) => !session.pinned && session.status === "idle"),
       },
-      { key: "done", label: "Completed", sessions: this.sessions.filter((session) => !session.pinned && session.status === "done") },
+      { key: "done", label: "Completed", sessions: this.sessions.filter((session) => !session.pinned && isCompletedStatus(session.status)) },
     ];
     return groups.filter((group) => group.sessions.length > 0);
   }
@@ -210,9 +216,9 @@ export class SessionBoard implements Component {
   }
 
   private summaryLine(): string {
-    const working = this.sessions.filter((session) => session.status === "working").length;
+    const working = this.sessions.filter((session) => isWorkingStatus(session.status)).length;
     const waiting = this.sessions.filter((session) => session.status === "idle").length;
-    const completed = this.sessions.filter((session) => session.status === "done").length;
+    const completed = this.sessions.filter((session) => isCompletedStatus(session.status)).length;
     return [
       this.logoPrefix(2),
       this.theme.fg("dim", "Sessions  "),
@@ -282,13 +288,27 @@ function sessionRowKey(id: string): string {
 
 function statusDisplay(status: PiSessionItem["status"], theme: Theme): { symbol: string; label: string } {
   switch (status) {
+    case "starting":
+      return { symbol: theme.fg("warning", "◌"), label: theme.fg("warning", "starting") };
     case "working":
       return { symbol: theme.fg("accent", "●"), label: theme.fg("accent", "working") };
     case "idle":
       return { symbol: theme.fg("muted", "○"), label: theme.fg("muted", "waiting") };
+    case "failed":
+      return { symbol: theme.fg("error", "✕"), label: theme.fg("error", "failed") };
+    case "stopped":
+      return { symbol: theme.fg("dim", "·"), label: theme.fg("dim", "stopped") };
     case "done":
       return { symbol: theme.fg("success", "·"), label: theme.fg("success", "done") };
   }
+}
+
+function isWorkingStatus(status: PiSessionItem["status"]): boolean {
+  return status === "starting" || status === "working";
+}
+
+function isCompletedStatus(status: PiSessionItem["status"]): boolean {
+  return status === "done" || status === "failed" || status === "stopped";
 }
 
 function visibleRange(selectedRowIndex: number, count: number, maxRows: number): { start: number; end: number } {
