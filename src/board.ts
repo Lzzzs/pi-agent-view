@@ -17,7 +17,10 @@ type DisplayRow =
   | { type: "section"; label: string; count: number }
   | { type: "session"; session: PiSessionItem };
 
-const TOP_ROWS = 4;
+// Terminal-native rendering of assets/pi-logo-on-dark.svg. Keeping it in cells
+// makes the mark work in every terminal, not just image-protocol terminals.
+const PI_LOGO = ["███ ", "█ █ ", " ███", "██ █"] as const;
+const TOP_ROWS = PI_LOGO.length;
 const BOTTOM_ROWS = 4;
 const MIN_PANEL_HEIGHT = TOP_ROWS + BOTTOM_ROWS + 1;
 const MAX_PROMPT_LENGTH = 2_000;
@@ -104,7 +107,7 @@ export class SessionBoard implements Component {
       this.row(this.brandLine(), width),
       this.row(this.workspaceLine(width), width),
       this.row(this.summaryLine(), width),
-      this.row("", width),
+      this.row(this.logoPrefix(3), width),
     ];
 
     const displayRows = this.getDisplayRows();
@@ -160,12 +163,12 @@ export class SessionBoard implements Component {
   }
 
   private brandLine(): string {
-    return `  ${this.theme.fg("accent", "●")} ${this.theme.bold("Pi Agents View")} ${this.theme.fg("dim", "· SESSION BOARD")}`;
+    return `${this.logoPrefix(0)}${this.theme.bold("Pi Agents View")} ${this.theme.fg("dim", "· SESSION BOARD")}`;
   }
 
   private workspaceLine(width: number): string {
-    const prefix = this.theme.fg("muted", "  Workspace  ");
-    const pathWidth = Math.max(1, width - visibleWidth(prefix) - 2);
+    const prefix = `${this.logoPrefix(1)}${this.theme.fg("muted", "Workspace  ")}`;
+    const pathWidth = Math.max(1, width - visibleWidth(prefix));
     return `${prefix}${truncateToWidth(this.meta.cwd, pathWidth)}`;
   }
 
@@ -174,11 +177,16 @@ export class SessionBoard implements Component {
     const waiting = this.sessions.filter((session) => session.status === "idle").length;
     const completed = this.sessions.filter((session) => session.status === "done").length;
     return [
-      this.theme.fg("dim", "  Sessions  "),
+      this.logoPrefix(2),
+      this.theme.fg("dim", "Sessions  "),
       this.theme.fg("accent", `${working} working`),
       this.theme.fg("muted", ` · ${waiting} awaiting input`),
       this.theme.fg("success", ` · ${completed} completed`),
     ].join("");
+  }
+
+  private logoPrefix(row: number): string {
+    return `  ${this.theme.bold(PI_LOGO[row] ?? "    ")}  `;
   }
 
   private sectionRow(label: string, count: number, width: number): string {

@@ -11,6 +11,7 @@ see session status → type a new task or resume a session → work → ← → 
 ## Features
 
 - Starts directly in a full-terminal Session Board when you run `pi`
+- Uses the supplied Pi mark as a terminal-native pixel logo (works without image-protocol support)
 - A focused task input starts a **new** real Pi session with `Enter`
 - Shows workspace metadata and grouped `Pinned` / `Working` / `Awaiting input` / `Completed` sessions
 - Uses the full terminal height to show as many sessions as possible
@@ -65,9 +66,10 @@ Press `Esc` to close it and return to the current session. Open it again at any 
 ```
 
 ```text
-  ● Pi Agents View · SESSION BOARD
-  Workspace  /Users/me/code/project
-  Sessions   1 working · 2 awaiting input · 18 completed
+  ███   Pi Agents View · SESSION BOARD
+  █ █   Workspace  /Users/me/code/project
+   ███  Sessions   1 working · 2 awaiting input · 18 completed
+  ██ █
 
   Pinned  1
   > ◆ ● recorder-multi-tab                         project  now
