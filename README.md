@@ -1,4 +1,4 @@
-# Pi Agent View
+# Pi Agents View
 
 A small, terminal-native session switcher for [Pi](https://github.com/badlogic/pi-mono).
 
@@ -28,7 +28,7 @@ see session status → open a session → work → ← → return to the board
 ### From GitHub
 
 ```bash
-pi install git:github.com/Lzzzs/pi-agent-view
+pi install git:github.com/Lzzzs/pi-agents-view
 ```
 
 Restart Pi, or run `/reload` in an existing Pi session.
@@ -36,8 +36,8 @@ Restart Pi, or run `/reload` in an existing Pi session.
 ### From a local clone
 
 ```bash
-git clone https://github.com/Lzzzs/pi-agent-view.git
-cd pi-agent-view
+git clone https://github.com/Lzzzs/pi-agents-view.git
+cd pi-agents-view
 pi install "$(pwd)"
 ```
 
@@ -82,8 +82,10 @@ Press `Esc` to close it and return to the current session. Open it again at any 
 | `←` / `Ctrl+←` | Return to the board when the normal editor is empty and Pi is idle |
 
 Pins, custom names, selection, and lightweight runtime records are stored in
-`~/.pi/agent-view/state.json`. Pi session JSONL files remain the source of truth
-for transcripts, existing titles, and session data.
+`~/.pi/agents-view/state.json`. Existing state from the earlier
+`~/.pi/agent-view/state.json` location is migrated automatically. Pi session
+JSONL files remain the source of truth for transcripts, existing titles, and
+session data.
 
 ## Session status
 
@@ -95,7 +97,7 @@ The extension uses Pi lifecycle events rather than session-file modification tim
 
 ## Scope and limitations
 
-Pi Agent View intentionally does not implement cloning, forking, task management, a web UI, or a separate chat renderer. Opening a row resumes the actual Pi session.
+Pi Agents View intentionally does not implement cloning, forking, task management, a web UI, or a separate chat renderer. Opening a row resumes the actual Pi session.
 
 Pi `0.84.2` does not expose public mouse row hit-testing to extensions. The board is therefore keyboard-first; it does not parse raw mouse sequences or modify Pi core.
 

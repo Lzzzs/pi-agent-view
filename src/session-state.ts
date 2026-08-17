@@ -37,6 +37,10 @@ const LOCK_RETRIES = 200;
 const LOCK_RETRY_DELAY_MS = 15;
 
 export function defaultStatePath(): string {
+  return join(homedir(), ".pi", "agents-view", "state.json");
+}
+
+function legacyStatePath(): string {
   return join(homedir(), ".pi", "agent-view", "state.json");
 }
 
@@ -109,11 +113,14 @@ export class AgentViewStateStore {
   }
 
   private async readState(): Promise<AgentViewStateFile> {
-    try {
-      return normalizeState(JSON.parse(await readFile(this.filePath, "utf8")));
-    } catch {
-      return cloneEmptyState();
+    const current = await readStateFile(this.filePath);
+    if (current) return current;
+
+    // Rename compatibility: preserve existing pins/names from Pi Agent View.
+    if (this.filePath === defaultStatePath()) {
+      return (await readStateFile(legacyStatePath())) ?? cloneEmptyState();
     }
+    return cloneEmptyState();
   }
 
   private async update(mutator: (state: AgentViewStateFile) => void): Promise<void> {
@@ -161,6 +168,14 @@ export class AgentViewStateStore {
 
 function cloneEmptyState(): AgentViewStateFile {
   return { version: 1, sessions: {} };
+}
+
+async function readStateFile(path: string): Promise<AgentViewStateFile | undefined> {
+  try {
+    return normalizeState(JSON.parse(await readFile(path, "utf8")));
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeState(value: unknown): AgentViewStateFile {
