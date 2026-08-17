@@ -20,6 +20,7 @@ see session status → type a new task or resume a session → work → ← → 
 - One isolated `pi --mode rpc` worker per background session
 - Structured Pi RPC commands and live agent/message/tool/lifecycle events
 - Background attach view reuses Pi's native Markdown, user/assistant message, tool, bash, editor, theme, spinner, and footer conventions
+- Native-style `/` autocomplete for RPC extension commands, prompt templates, skills, models, and `@` file paths
 - Keyboard-first navigation with an always-ready task input
 - Persistent pins and display-name overrides
 - Lifecycle-backed `starting` / `working` / `idle` / `failed` states
@@ -98,6 +99,7 @@ Press `Esc` to close it and return to the current session. Open it again at any 
 | `←` / `Ctrl+←` | Detach to the Board when the editor is empty, including while Pi is working |
 | `PageUp` / `PageDown` | Scroll an attached background transcript |
 | `Ctrl+O` | Expand or collapse attached tool output |
+| `/` | Show commands available to the attached runtime; continue typing to fuzzy-filter |
 
 Pins, custom names, selection, and lightweight runtime records are stored in
 `~/.pi/agents-view/state.json`. Existing state from the earlier

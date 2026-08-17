@@ -6,6 +6,9 @@ let firstStateRequest = true;
 let isStreaming = false;
 let isCompacting = false;
 let delayNextMessages = false;
+let currentModel = { provider: "fake", id: "model-a", name: "Model A", contextWindow: 100000, reasoning: false };
+let sessionName;
+let commandCatalogRequests = 0;
 let messages = [];
 let buffer = "";
 
@@ -22,6 +25,7 @@ function handle(command) {
     case "get_state": {
       const sendState = () =>
         response("get_state", command.id, {
+          model: currentModel,
           thinkingLevel: "off",
           isStreaming,
           isCompacting,
@@ -29,6 +33,7 @@ function handle(command) {
           followUpMode: "one-at-a-time",
           sessionFile,
           sessionId,
+          ...(sessionName ? { sessionName } : {}),
           autoCompactionEnabled: true,
           messageCount: messages.length,
           pendingMessageCount: 0,
@@ -48,6 +53,73 @@ function handle(command) {
       }
       return;
     }
+    case "get_commands": {
+      commandCatalogRequests += 1;
+      if (process.env.FAKE_CATALOG_FAILURE === "1") {
+        write({ type: "response", command: "get_commands", success: false, id: command.id, error: "catalog unavailable" });
+        return;
+      }
+      const refreshed = process.env.FAKE_ROTATE_COMMANDS === "1" && commandCatalogRequests > 1;
+      response("get_commands", command.id, {
+        commands: [
+          {
+            name: refreshed ? "refreshed-command" : "fake-command",
+            description: "Fake extension command",
+            source: "extension",
+            sourceInfo: { path: import.meta.filename },
+          },
+          { name: "skill:fake", description: "Fake skill", source: "skill", sourceInfo: { path: import.meta.filename } },
+        ],
+      });
+      return;
+    }
+    case "get_available_models":
+      if (process.env.FAKE_CATALOG_FAILURE === "1") {
+        write({
+          type: "response",
+          command: "get_available_models",
+          success: false,
+          id: command.id,
+          error: "models unavailable",
+        });
+        return;
+      }
+      response("get_available_models", command.id, {
+        models: [currentModel, { provider: "fake", id: "model-b", name: "Model B", contextWindow: 200000, reasoning: true }],
+      });
+      return;
+    case "set_model":
+      currentModel = {
+        provider: command.provider,
+        id: command.modelId,
+        name: command.modelId === "model-b" ? "Model B" : "Model A",
+        contextWindow: command.modelId === "model-b" ? 200000 : 100000,
+        reasoning: command.modelId === "model-b",
+      };
+      write({ type: "model_select", model: currentModel });
+      response("set_model", command.id, currentModel);
+      return;
+    case "set_session_name":
+      sessionName = command.name;
+      write({ type: "session_info_changed", name: sessionName });
+      response("set_session_name", command.id);
+      return;
+    case "export_html":
+      response("export_html", command.id, { path: command.outputPath ?? `/tmp/${sessionId}.html` });
+      return;
+    case "compact":
+      isCompacting = true;
+      write({ type: "compaction_start", reason: "manual" });
+      isCompacting = false;
+      write({
+        type: "compaction_end",
+        reason: "manual",
+        result: { summary: "rpc compacted transcript", tokensBefore: 100 },
+        aborted: false,
+        willRetry: false,
+      });
+      response("compact", command.id, { summary: "rpc compacted transcript", tokensBefore: 100 });
+      return;
     case "get_session_stats":
       response("get_session_stats", command.id, {
         sessionFile,

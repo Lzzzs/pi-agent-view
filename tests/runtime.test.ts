@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { createRuntimeAutocompleteProvider } from "../src/runtime/runtime-autocomplete.ts";
 import { PiRpcWorker } from "../src/runtime/pi-worker.ts";
 import { SessionClaimRegistry, SessionOwnedError } from "../src/runtime/session-claim.ts";
 import { DefaultSessionRuntimeManager } from "../src/runtime/runtime-manager.ts";
@@ -16,7 +17,12 @@ import { AgentViewStateStore } from "../src/session-state.ts";
 const here = dirname(fileURLToPath(import.meta.url));
 const fakeCli = join(here, "fixtures", "fake-pi-rpc.mjs");
 
-function createRuntime(cwd: string, sessionId: string, delayMs = 350): RpcSessionRuntime {
+function createRuntime(
+  cwd: string,
+  sessionId: string,
+  delayMs = 350,
+  extraEnv: Record<string, string> = {},
+): RpcSessionRuntime {
   return new RpcSessionRuntime({
     cwd,
     sessionId,
@@ -24,7 +30,7 @@ function createRuntime(cwd: string, sessionId: string, delayMs = 350): RpcSessio
     worker: new PiRpcWorker({
       cwd,
       cliPath: fakeCli,
-      env: { FAKE_SESSION_ID: sessionId, FAKE_DELAY_MS: String(delayMs) },
+      env: { FAKE_SESSION_ID: sessionId, FAKE_DELAY_MS: String(delayMs), ...extraEnv },
     }),
   });
 }
@@ -52,6 +58,90 @@ test("detach preserves a working runtime and its session identity", async () => 
     assert.equal(runtime.status, "idle");
     assert.equal(runtime.sessionId, "session-a");
     assert.match(JSON.stringify(runtime.getSnapshot().messages), /done:session-a/);
+  } finally {
+    await runtime.shutdown();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runtime autocomplete exposes native, extension, skill, model, and file-aware commands", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-agents-view-autocomplete-"));
+  const runtime = createRuntime(cwd, "session-autocomplete");
+  try {
+    await writeFile(join(cwd, "autocomplete-file.txt"), "test");
+    await runtime.start();
+    const provider = createRuntimeAutocompleteProvider(runtime.getSnapshot());
+    const signal = new AbortController().signal;
+    const commands = await provider.getSuggestions(["/"], 0, 1, { signal });
+    assert.ok(commands?.items.some((item) => item.value === "model"));
+    assert.ok(commands?.items.some((item) => item.value === "fake-command"));
+    assert.ok(commands?.items.some((item) => item.value === "skill:fake"));
+    assert.ok(!commands?.items.some((item) => item.value === "settings"), "foreground-only commands must be absent");
+
+    const filtered = await provider.getSuggestions(["/fake"], 0, 5, { signal });
+    assert.equal(filtered?.items[0]?.value, "fake-command");
+
+    const models = await provider.getSuggestions(["/model model"], 0, 12, { signal });
+    assert.ok(models?.items.some((item) => item.value === "fake/model-a"));
+    assert.ok(models?.items.some((item) => item.value === "fake/model-b"));
+
+    const files = await provider.getSuggestions(["@autocomplete-f"], 0, 15, { signal });
+    assert.ok(files?.items.some((item) => item.value.includes("autocomplete-file.txt")));
+  } finally {
+    await runtime.shutdown();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("catalog failures do not prevent a runtime from starting", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-agents-view-catalog-failure-"));
+  const runtime = createRuntime(cwd, "session-catalog-failure", 20, { FAKE_CATALOG_FAILURE: "1" });
+  try {
+    await runtime.start();
+    assert.equal(runtime.status, "idle");
+    assert.deepEqual(runtime.getSnapshot().commands, []);
+    assert.deepEqual(runtime.getSnapshot().availableModels, []);
+  } finally {
+    await runtime.shutdown();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("reattaching refreshes command and model catalogs", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-agents-view-catalog-refresh-"));
+  const runtime = createRuntime(cwd, "session-catalog-refresh", 20, { FAKE_ROTATE_COMMANDS: "1" });
+  try {
+    await runtime.start();
+    assert.ok(runtime.getSnapshot().commands.some((command) => command.name === "fake-command"));
+    await runtime.attach();
+    const snapshot = runtime.getSnapshot();
+    assert.ok(snapshot.commands.some((command) => command.name === "refreshed-command"));
+    assert.ok(!snapshot.commands.some((command) => command.name === "fake-command"));
+  } finally {
+    await runtime.shutdown();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("attach-view built-in slash commands execute through RPC instead of becoming prompts", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-agents-view-builtin-commands-"));
+  const runtime = createRuntime(cwd, "session-builtin-commands", 20);
+  try {
+    await runtime.start();
+    await runtime.send("/name Background Work");
+    assert.equal(runtime.getSnapshot().state?.sessionName, "Background Work");
+    await runtime.send("/model fake/model-b");
+    assert.equal(runtime.getSnapshot().state?.model?.id, "model-b");
+    await runtime.send("/export /tmp/background.html");
+    assert.match(runtime.getSnapshot().notice ?? "", /background\.html/);
+    await runtime.send("/session");
+    assert.match(runtime.getSnapshot().notice ?? "", /messages/);
+    await runtime.send("/compact keep decisions");
+    assert.equal(runtime.getSnapshot().state?.isCompacting, false);
+    assert.equal(runtime.getSnapshot().messages.length, 0, "built-in commands must not be appended as user prompts");
+
+    await runtime.send("/fake-command");
+    assert.match(JSON.stringify(runtime.getSnapshot().messages), /\/fake-command/);
   } finally {
     await runtime.shutdown();
     await rm(cwd, { recursive: true, force: true });

@@ -13,6 +13,7 @@ import {
 import {
   responseData,
   type RpcCommandBody,
+  type RuntimeSlashCommand,
   type WorkerClient,
   type WorkerProtocolEvent,
   type WorkerStartResult,
@@ -97,6 +98,39 @@ export class PiRpcWorker implements WorkerClient {
 
   async getSessionStats(): Promise<SessionStats> {
     return responseData<SessionStats>(await this.request({ type: "get_session_stats" }));
+  }
+
+  async getCommands(): Promise<RuntimeSlashCommand[]> {
+    const data = responseData<{ commands: RuntimeSlashCommand[] }>(await this.request({ type: "get_commands" }));
+    return data.commands;
+  }
+
+  async getAvailableModels(): Promise<Array<NonNullable<RpcSessionState["model"]>>> {
+    const data = responseData<{ models: Array<NonNullable<RpcSessionState["model"]>> }>(
+      await this.request({ type: "get_available_models" }),
+    );
+    return data.models;
+  }
+
+  async compact(customInstructions?: string): Promise<void> {
+    responseData(await this.request({ type: "compact", ...(customInstructions ? { customInstructions } : {}) }));
+  }
+
+  async setSessionName(name: string): Promise<void> {
+    responseData(await this.request({ type: "set_session_name", name }));
+  }
+
+  async exportHtml(outputPath?: string): Promise<string> {
+    const data = responseData<{ path: string }>(
+      await this.request({ type: "export_html", ...(outputPath ? { outputPath } : {}) }),
+    );
+    return data.path;
+  }
+
+  async setModel(provider: string, modelId: string): Promise<NonNullable<RpcSessionState["model"]>> {
+    return responseData<NonNullable<RpcSessionState["model"]>>(
+      await this.request({ type: "set_model", provider, modelId }),
+    );
   }
 
   async shutdown(): Promise<void> {

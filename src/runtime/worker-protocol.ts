@@ -15,6 +15,12 @@ export type WorkerProtocolEvent =
   | { type: "extension_ui"; request: RpcExtensionUIRequest }
   | { type: "exit"; expected: boolean; error?: Error };
 
+export interface RuntimeSlashCommand {
+  name: string;
+  description?: string;
+  source: "extension" | "prompt" | "skill";
+}
+
 export interface WorkerStartResult {
   state: RpcSessionState;
 }
@@ -26,6 +32,12 @@ export interface WorkerClient {
   getState(): Promise<RpcSessionState>;
   getMessages(): Promise<unknown[]>;
   getSessionStats(): Promise<SessionStats>;
+  getCommands(): Promise<RuntimeSlashCommand[]>;
+  getAvailableModels(): Promise<Array<NonNullable<RpcSessionState["model"]>>>;
+  compact(customInstructions?: string): Promise<void>;
+  setSessionName(name: string): Promise<void>;
+  exportHtml(outputPath?: string): Promise<string>;
+  setModel(provider: string, modelId: string): Promise<NonNullable<RpcSessionState["model"]>>;
   onEvent(listener: (event: WorkerProtocolEvent) => void): () => void;
   shutdown(): Promise<void>;
 }

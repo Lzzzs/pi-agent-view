@@ -1,6 +1,6 @@
 import type { RpcSessionState, SessionStats } from "@earendil-works/pi-coding-agent";
 import { PiRpcWorker, type PiRpcWorkerOptions } from "./pi-worker.ts";
-import type { WorkerClient, WorkerProtocolEvent } from "./worker-protocol.ts";
+import type { RuntimeSlashCommand, WorkerClient, WorkerProtocolEvent } from "./worker-protocol.ts";
 
 export type SessionRuntimeStatus = "starting" | "working" | "idle" | "failed" | "stopped";
 
@@ -36,6 +36,8 @@ export interface SessionRuntimeSnapshot {
   state?: RpcSessionState;
   stats?: SessionStats;
   usageSinceStats: RuntimeUsageSnapshot;
+  commands: readonly RuntimeSlashCommand[];
+  availableModels: ReadonlyArray<NonNullable<RpcSessionState["model"]>>;
   messages: readonly unknown[];
   streamingMessage?: unknown;
   streamingText: string;
@@ -79,6 +81,8 @@ export class RpcSessionRuntime implements SessionRuntime {
   private rpcState?: RpcSessionState;
   private sessionStats?: SessionStats;
   private usageSinceStats = emptyUsage();
+  private commands: RuntimeSlashCommand[] = [];
+  private availableModels: Array<NonNullable<RpcSessionState["model"]>> = [];
   private streamingMessage?: unknown;
   private streamingText = "";
   private readonly toolCallArgumentBuffers = new Map<number, string>();
@@ -139,6 +143,7 @@ export class RpcSessionRuntime implements SessionRuntime {
       const [messages, stats] = await Promise.all([this.worker.getMessages(), this.worker.getSessionStats()]);
       this.messages = messages;
       this.sessionStats = stats;
+      await this.refreshCatalogs();
       this._status = state.isStreaming ? "working" : "idle";
       this.emit();
     } catch (error) {
@@ -154,6 +159,8 @@ export class RpcSessionRuntime implements SessionRuntime {
 
     this.runFailed = false;
     this.error = undefined;
+    this.notice = undefined;
+    if (await this.executeBuiltInCommand(text)) return;
     if (this.rpcState?.isCompacting) {
       this.compactionQueue.push(text);
       this.emit();
@@ -171,7 +178,67 @@ export class RpcSessionRuntime implements SessionRuntime {
     }
   }
 
+  private async executeBuiltInCommand(text: string): Promise<boolean> {
+    const match = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(text);
+    if (!match) return false;
+    const command = match[1]!.toLowerCase();
+    const argument = match[2]?.trim() ?? "";
+    if (!ATTACH_BUILTIN_COMMANDS.has(command)) return false;
+
+    try {
+      switch (command) {
+        case "compact":
+          if (this._status === "working") throw new Error("Wait for the current response to finish before compacting.");
+          await this.worker.compact(argument || undefined);
+          await this.refreshFromWorker(true);
+          return true;
+        case "name":
+          if (!argument) throw new Error("Usage: /name <session name>");
+          await this.worker.setSessionName(argument);
+          if (this.rpcState) this.rpcState = { ...this.rpcState, sessionName: argument };
+          this.notice = `Session renamed to “${argument}”.`;
+          this.emit();
+          return true;
+        case "model": {
+          if (!argument) throw new Error("Usage: /model <provider/model>");
+          const candidates = this.availableModels.filter(
+            (model) => `${model.provider}/${model.id}` === argument || model.id === argument,
+          );
+          if (candidates.length !== 1) throw new Error(`Unknown or ambiguous model “${argument}”.`);
+          const selected = candidates[0]!;
+          const model = await this.worker.setModel(selected.provider, selected.id);
+          if (this.rpcState) this.rpcState = { ...this.rpcState, model };
+          this.notice = `Model set to ${model.provider}/${model.id}.`;
+          this.emit();
+          return true;
+        }
+        case "session": {
+          const stats = await this.worker.getSessionStats();
+          this.sessionStats = stats;
+          this.notice = `${stats.totalMessages} messages · ${stats.tokens.total} tokens · $${stats.cost.toFixed(3)}`;
+          this.emit();
+          return true;
+        }
+        case "export": {
+          const path = await this.worker.exportHtml(argument || undefined);
+          this.notice = `Exported session to ${path}`;
+          this.emit();
+          return true;
+        }
+        default:
+          this.notice = `/${command} is only available in Pi’s native foreground view.`;
+          this.emit();
+          return true;
+      }
+    } catch (error) {
+      this.notice = error instanceof Error ? error.message : String(error);
+      this.emit();
+      return true;
+    }
+  }
+
   async attach(): Promise<void> {
+    await this.refreshCatalogs();
     this.attached = true;
     this.emit();
   }
@@ -210,6 +277,8 @@ export class RpcSessionRuntime implements SessionRuntime {
       ...(this.rpcState ? { state: cloneJson(this.rpcState) } : {}),
       ...(this.sessionStats ? { stats: cloneJson(this.sessionStats) } : {}),
       usageSinceStats: cloneJson(this.usageSinceStats),
+      commands: cloneJson(this.commands),
+      availableModels: cloneJson(this.availableModels),
       messages: cloneJson(this.messages),
       ...(this.streamingMessage === undefined ? {} : { streamingMessage: cloneJson(this.streamingMessage) }),
       streamingText: this.streamingText,
@@ -227,6 +296,17 @@ export class RpcSessionRuntime implements SessionRuntime {
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  private async refreshCatalogs(): Promise<void> {
+    if (!this.workerAlive) return;
+    const [commands, models] = await Promise.allSettled([
+      this.worker.getCommands(),
+      this.worker.getAvailableModels(),
+    ]);
+    if (!this.workerAlive) return;
+    if (commands.status === "fulfilled") this.commands = commands.value;
+    if (models.status === "fulfilled") this.availableModels = models.value;
   }
 
   private applyState(state: RpcSessionState): void {
@@ -617,6 +697,33 @@ export class RpcSessionRuntime implements SessionRuntime {
     for (const listener of this.listeners) listener();
   }
 }
+
+const ATTACH_BUILTIN_COMMANDS = new Set([
+  "agents",
+  "agents-new-safe",
+  "settings",
+  "model",
+  "scoped-models",
+  "export",
+  "import",
+  "share",
+  "copy",
+  "name",
+  "session",
+  "changelog",
+  "hotkeys",
+  "fork",
+  "clone",
+  "tree",
+  "trust",
+  "login",
+  "logout",
+  "new",
+  "compact",
+  "resume",
+  "reload",
+  "quit",
+]);
 
 function isRole(message: unknown, role: string): boolean {
   return !!message && typeof message === "object" && (message as Record<string, unknown>).role === role;

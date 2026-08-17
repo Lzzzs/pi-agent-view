@@ -27,6 +27,7 @@ import {
   type Component,
   type TUI,
 } from "@earendil-works/pi-tui";
+import { createRuntimeAutocompleteProvider, runtimeAutocompleteSignature } from "./runtime-autocomplete.ts";
 import type { RuntimeToolSnapshot, SessionRuntime, SessionRuntimeSnapshot } from "./session-runtime.ts";
 
 export type RuntimeViewAction = { type: "detach" };
@@ -47,6 +48,7 @@ export class RuntimeView implements Component {
   private ctrlCArmedUntil = 0;
   private ctrlCNoticeTimer?: NodeJS.Timeout;
   private toolsExpanded = false;
+  private autocompleteSignature: string;
   private unsubscribe: () => void;
   private cachedTranscript?: { revision: number; expanded: boolean; components: Component[] };
   private lastTranscriptLength = 0;
@@ -71,6 +73,8 @@ export class RuntimeView implements Component {
       keybindings,
       { paddingX: 1, autocompleteMaxVisible: 5 },
     );
+    this.autocompleteSignature = runtimeAutocompleteSignature(snapshot);
+    this.editor.setAutocompleteProvider(createRuntimeAutocompleteProvider(snapshot));
     this.editor.onChange = () => this.onChange();
     this.editor.onSubmit = (text) => this.submit(text);
     this.editor.onEscape = () => {
@@ -110,6 +114,12 @@ export class RuntimeView implements Component {
     }
 
     this.unsubscribe = runtime.subscribe(() => {
+      const nextSnapshot = runtime.getSnapshot();
+      const signature = runtimeAutocompleteSignature(nextSnapshot);
+      if (signature !== this.autocompleteSignature) {
+        this.autocompleteSignature = signature;
+        this.editor.setAutocompleteProvider(createRuntimeAutocompleteProvider(nextSnapshot));
+      }
       this.cachedTranscript = undefined;
       this.onChange();
     });
