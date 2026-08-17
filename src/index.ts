@@ -18,9 +18,20 @@ export default function agentView(pi: ExtensionAPI): void {
     },
   });
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     await markCurrentSession(state, ctx, "idle");
-    if (ctx.mode === "tui") installBackToBoardEditor(pi, ctx);
+    if (ctx.mode !== "tui") return;
+
+    installBackToBoardEditor(pi, ctx);
+
+    // A bare `pi` starts with the switcher. Route through Pi's command
+    // dispatcher so showBoard receives the command-only switchSession API.
+    // Resumed sessions do not re-open the board after Enter selects a row.
+    if (event.reason === "startup") {
+      queueMicrotask(() => {
+        pi.sendUserMessage("/agents", { expandPromptTemplates: true });
+      });
+    }
   });
 
   // These are Pi lifecycle events, not timestamp heuristics.

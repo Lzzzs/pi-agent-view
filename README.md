@@ -10,7 +10,8 @@ see session status → open a session → work → ← → return to the board
 
 ## Features
 
-- Terminal-only Session Board: no browser, HTTP server, desktop app, or transcript copy
+- Starts directly in the terminal-only Session Board when you run `pi`
+- No browser, HTTP server, desktop app, or transcript copy
 - Real Pi session resume through Pi's `switchSession()` API
 - Keyboard-first navigation: `↑`/`↓`, `j`/`k`, `Enter`, `p`, `r`, and `Esc`
 - Persistent pins and display-name overrides
@@ -48,7 +49,13 @@ pi -e ./index.ts
 
 ## Use
 
-Open the board with:
+After installation, a normal interactive launch opens the board directly:
+
+```bash
+pi
+```
+
+Press `Esc` to close it and return to the current session. Open it again at any time with:
 
 ```text
 /agents
