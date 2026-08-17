@@ -6,7 +6,10 @@ import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { createRuntimeAutocompleteProvider } from "../src/runtime/runtime-autocomplete.ts";
+import {
+  createRuntimeAutocompleteProvider,
+  runtimeAutocompleteSignature,
+} from "../src/runtime/runtime-autocomplete.ts";
 import { PiRpcWorker } from "../src/runtime/pi-worker.ts";
 import { SessionClaimRegistry, SessionOwnedError } from "../src/runtime/session-claim.ts";
 import { DefaultSessionRuntimeManager } from "../src/runtime/runtime-manager.ts";
@@ -87,6 +90,13 @@ test("runtime autocomplete exposes native, extension, skill, model, and file-awa
 
     const files = await provider.getSuggestions(["@autocomplete-f"], 0, 15, { signal });
     assert.ok(files?.items.some((item) => item.value.includes("autocomplete-file.txt")));
+
+    const legacySnapshot = { ...runtime.getSnapshot() };
+    delete legacySnapshot.commands;
+    delete legacySnapshot.availableModels;
+    assert.doesNotThrow(() => runtimeAutocompleteSignature(legacySnapshot));
+    const legacyProvider = createRuntimeAutocompleteProvider(legacySnapshot);
+    assert.equal(await legacyProvider.getSuggestions(["/"], 0, 1, { signal }), null);
   } finally {
     await runtime.shutdown();
     await rm(cwd, { recursive: true, force: true });

@@ -14,19 +14,20 @@ const ATTACH_COMMANDS: ReadonlyArray<SlashCommand> = [
 
 export function runtimeAutocompleteSignature(snapshot: SessionRuntimeSnapshot): string {
   return JSON.stringify({
-    commands: snapshot.commands.map((command) => [command.name, command.description, command.source]),
-    models: snapshot.availableModels.map((model) => [model.provider, model.id]),
+    commands: (snapshot.commands ?? []).map((command) => [command.name, command.description, command.source]),
+    models: (snapshot.availableModels ?? []).map((model) => [model.provider, model.id]),
   });
 }
 
 export function createRuntimeAutocompleteProvider(snapshot: SessionRuntimeSnapshot): CombinedAutocompleteProvider {
-  const nativeCommands: SlashCommand[] = ATTACH_COMMANDS.map((command) => ({
+  const supportsRuntimeCommands = snapshot.commands !== undefined && snapshot.availableModels !== undefined;
+  const nativeCommands: SlashCommand[] = (supportsRuntimeCommands ? ATTACH_COMMANDS : []).map((command) => ({
     ...command,
     ...(command.name === "model"
       ? {
           getArgumentCompletions: (prefix: string) => {
             const query = prefix.toLowerCase();
-            return snapshot.availableModels
+            return (snapshot.availableModels ?? [])
               .map((model) => ({
                 value: `${model.provider}/${model.id}`,
                 label: model.id,
@@ -39,7 +40,7 @@ export function createRuntimeAutocompleteProvider(snapshot: SessionRuntimeSnapsh
   }));
 
   const nativeNames = new Set(nativeCommands.map((command) => command.name));
-  const rpcCommands: SlashCommand[] = snapshot.commands
+  const rpcCommands: SlashCommand[] = (snapshot.commands ?? [])
     .filter(
       (command) =>
         !nativeNames.has(command.name) && command.name !== "agents" && command.name !== "agents-new-safe",

@@ -36,8 +36,9 @@ export interface SessionRuntimeSnapshot {
   state?: RpcSessionState;
   stats?: SessionStats;
   usageSinceStats: RuntimeUsageSnapshot;
-  commands: readonly RuntimeSlashCommand[];
-  availableModels: ReadonlyArray<NonNullable<RpcSessionState["model"]>>;
+  /** Optional for runtimes retained across an extension hot reload from versions before autocomplete support. */
+  commands?: readonly RuntimeSlashCommand[];
+  availableModels?: ReadonlyArray<NonNullable<RpcSessionState["model"]>>;
   messages: readonly unknown[];
   streamingMessage?: unknown;
   streamingText: string;
