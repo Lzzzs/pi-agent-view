@@ -17,10 +17,10 @@ type DisplayRow =
   | { type: "section"; label: string; count: number }
   | { type: "session"; session: PiSessionItem };
 
-// Terminal-native rendering of assets/pi-logo-on-dark.svg. Keeping it in cells
-// makes the mark work in every terminal, not just image-protocol terminals.
-const PI_LOGO = ["███ ", "█ █ ", "██ █", "█  █"] as const;
-const TOP_ROWS = PI_LOGO.length;
+// Terminal-native rendering of assets/pi-logo-on-dark.svg. Upper-half blocks
+// compress its four pixel rows into two terminal rows, preserving its aspect ratio.
+const PI_LOGO = ["█▀█ ", "█▀ █"] as const;
+const TOP_ROWS = 3;
 const BOTTOM_ROWS = 4;
 const MIN_PANEL_HEIGHT = TOP_ROWS + BOTTOM_ROWS + 1;
 const MAX_PROMPT_LENGTH = 2_000;
@@ -107,7 +107,6 @@ export class SessionBoard implements Component {
       this.row(this.brandLine(), width),
       this.row(this.workspaceLine(width), width),
       this.row(this.summaryLine(), width),
-      this.row(this.logoPrefix(3), width),
     ];
 
     const displayRows = this.getDisplayRows();
