@@ -58,7 +58,15 @@ async function showBoard(ctx: ExtensionCommandContext, state: AgentViewStateStor
     const sessions = await provider.list();
     const action = await ctx.ui.custom<BoardAction>(
       (tui, theme, _keybindings, done) =>
-        new SessionBoard(sessions, selectedId, theme, done, () => tui.requestRender(), () => tui.terminal.rows),
+        new SessionBoard(
+          sessions,
+          selectedId,
+          { cwd: ctx.cwd },
+          theme,
+          done,
+          () => tui.requestRender(),
+          () => tui.terminal.rows,
+        ),
       {
         overlay: true,
         overlayOptions: {
@@ -72,6 +80,17 @@ async function showBoard(ctx: ExtensionCommandContext, state: AgentViewStateStor
     );
 
     if (!action || action.type === "close") return;
+
+    if (action.type === "new") {
+      const prompt = action.prompt;
+      await ctx.newSession({
+        withSession: async (newSessionCtx) => {
+          await newSessionCtx.sendUserMessage(prompt);
+        },
+      });
+      return; // ctx is stale after a real session replacement.
+    }
+
     selectedId = action.id;
     await state.setLastSelectedSessionId(selectedId);
 

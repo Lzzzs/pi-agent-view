@@ -2,19 +2,21 @@
 
 A small, terminal-native session switcher for [Pi](https://github.com/badlogic/pi-mono).
 
-It is deliberately not a task manager or a web dashboard. It optimizes one loop:
+It is deliberately not a web dashboard. It provides one terminal-native loop:
 
 ```text
-see session status → open a session → work → ← → return to the board
+see session status → type a new task or resume a session → work → ← → return to the board
 ```
 
 ## Features
 
 - Starts directly in a full-terminal Session Board when you run `pi`
+- A focused task input starts a **new** real Pi session with `Enter`
+- Shows workspace metadata and grouped `Pinned` / `Working` / `Awaiting input` / `Completed` sessions
 - Uses the full terminal height to show as many sessions as possible
 - No browser, HTTP server, desktop app, or transcript copy
-- Real Pi session resume through Pi's `switchSession()` API
-- Keyboard-first navigation: `↑`/`↓`, `j`/`k`, `Enter`, `p`, `r`, and `Esc`
+- Real Pi session creation and resume through Pi's `newSession()` and `switchSession()` APIs
+- Keyboard-first navigation with an always-ready task input
 - Persistent pins and display-name overrides
 - Lifecycle-backed `working` / `idle` / `done` states for Pi processes running the extension
 - `←` (with `Ctrl+←` fallback) returns to the board only when the normal prompt editor is empty and idle
@@ -63,22 +65,30 @@ Press `Esc` to close it and return to the current session. Open it again at any 
 ```
 
 ```text
-┌─ Sessions ──────────────────────────────────────┐
-│ > 📌 ● recorder-multi-tab              working  │
-│     ○ qianfan-config                    idle     │
-│     ✓ eslint-fix                        done     │
-├────────────────────────────────────────────────┤
-│ ↑↓/jk select  Enter open  p pin  r rename       │
-└────────────────────────────────────────────────┘
+  ● Pi Agents View · SESSION BOARD
+  Workspace  /Users/me/code/project
+  Sessions   1 working · 2 awaiting input · 18 completed
+
+  Pinned  1
+  > ◆ ● recorder-multi-tab                         project  now
+  Working  1
+      ● eslint-fix                                  project  2m
+  Completed  18
+      · qianfan-config                              project  1h
+────────────────────────────────────────────────────────────────
+  › Describe a task to start a new session
+────────────────────────────────────────────────────────────────
+  Enter starts task · empty Enter opens selection · ↑↓ select
 ```
 
 | Key | Action |
 | --- | --- |
-| `↑` / `k` | Previous session |
-| `↓` / `j` | Next session |
-| `Enter` | Resume the selected Pi session |
-| `p` | Pin or unpin the selected session |
-| `r` | Rename the selected session |
+| Type a task, then `Enter` | Start a clean Pi session and send it the task |
+| `↑` | Previous session |
+| `↓` | Next session |
+| Empty `Enter` | Resume the selected Pi session |
+| `Alt+P` | Pin or unpin the selected session |
+| `Alt+R` | Rename the selected session |
 | `Esc` | Close the board |
 | `←` / `Ctrl+←` | Return to the board when the normal editor is empty and Pi is idle |
 
@@ -98,7 +108,7 @@ The extension uses Pi lifecycle events rather than session-file modification tim
 
 ## Scope and limitations
 
-Pi Agents View intentionally does not implement cloning, forking, task management, a web UI, or a separate chat renderer. Opening a row resumes the actual Pi session.
+Pi Agents View intentionally does not implement cloning, forking, a web UI, or a separate chat renderer. Starting a task creates an actual clean Pi session; opening a row resumes the actual selected Pi session.
 
 Pi `0.84.2` does not expose public mouse row hit-testing to extensions. The board is therefore keyboard-first; it does not parse raw mouse sequences or modify Pi core.
 

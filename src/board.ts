@@ -1,22 +1,41 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, Key, matchesKey, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import type { PiSessionItem } from "./session-provider.ts";
 
 export type BoardAction =
   | { type: "open"; id: string }
+  | { type: "new"; prompt: string }
   | { type: "pin"; id: string }
   | { type: "rename"; id: string }
   | { type: "close" };
 
-const MIN_PANEL_HEIGHT = 7;
+export interface BoardMeta {
+  cwd: string;
+}
 
-/** A terminal-height Session Board intended for a full-screen overlay. */
+type DisplayRow =
+  | { type: "section"; label: string; count: number }
+  | { type: "session"; session: PiSessionItem };
+
+const TOP_ROWS = 4;
+const BOTTOM_ROWS = 4;
+const MIN_PANEL_HEIGHT = TOP_ROWS + BOTTOM_ROWS + 1;
+const MAX_PROMPT_LENGTH = 2_000;
+
+/**
+ * A full-screen, task-first Pi session launcher. The prompt remains focused so
+ * typing a task and pressing Enter starts a clean Pi session immediately.
+ */
 export class SessionBoard implements Component {
+  public focused = false;
+
   private selectedIndex: number;
+  private prompt = "";
 
   constructor(
     private readonly sessions: PiSessionItem[],
     selectedId: string | undefined,
+    private readonly meta: BoardMeta,
     private readonly theme: Theme,
     private readonly done: (action: BoardAction) => void,
     private readonly onChange: () => void,
@@ -31,52 +50,82 @@ export class SessionBoard implements Component {
       this.done({ type: "close" });
       return;
     }
-    if (matchesKey(data, Key.up) || matchesKey(data, "k")) {
+    if (matchesKey(data, Key.up)) {
       this.move(-1);
       this.onChange();
       return;
     }
-    if (matchesKey(data, Key.down) || matchesKey(data, "j")) {
+    if (matchesKey(data, Key.down)) {
       this.move(1);
       this.onChange();
       return;
     }
-
-    const selected = this.sessions[this.selectedIndex];
-    if (!selected) return;
-    if (matchesKey(data, Key.enter)) {
-      this.done({ type: "open", id: selected.id });
-    } else if (matchesKey(data, "p")) {
-      this.done({ type: "pin", id: selected.id });
-    } else if (matchesKey(data, "r")) {
-      this.done({ type: "rename", id: selected.id });
+    if (matchesKey(data, "alt+p")) {
+      this.runSelected("pin");
+      return;
     }
+    if (matchesKey(data, "alt+r")) {
+      this.runSelected("rename");
+      return;
+    }
+    if (matchesKey(data, "ctrl+u")) {
+      if (this.prompt) {
+        this.prompt = "";
+        this.onChange();
+      }
+      return;
+    }
+    if (matchesKey(data, Key.backspace) || matchesKey(data, Key.delete)) {
+      if (this.prompt) {
+        this.prompt = Array.from(this.prompt).slice(0, -1).join("");
+        this.onChange();
+      }
+      return;
+    }
+    if (matchesKey(data, Key.enter)) {
+      const task = this.prompt.trim();
+      if (task) this.done({ type: "new", prompt: task });
+      else this.runSelected("open");
+      return;
+    }
+
+    const text = printableInput(data);
+    if (!text) return;
+    this.prompt = `${this.prompt}${text}`.slice(0, MAX_PROMPT_LENGTH);
+    this.onChange();
   }
 
   render(width: number): string[] {
     const height = Math.max(MIN_PANEL_HEIGHT, this.getTerminalRows());
-    if (width < 12) return narrowPanel(width, height);
+    if (width < 20) return narrowPanel(width, height);
 
-    const innerWidth = width - 2;
-    const contentRows = Math.max(1, height - 4); // header + divider + help + footer
-    const lines = [this.border(this.headerLabel(), "┐", innerWidth)];
+    const listRows = Math.max(1, height - TOP_ROWS - BOTTOM_ROWS);
+    const lines = [
+      this.row(this.brandLine(), width),
+      this.row(this.workspaceLine(width), width),
+      this.row(this.summaryLine(), width),
+      this.row("", width),
+    ];
 
-    if (this.sessions.length === 0) {
-      lines.push(this.row(this.theme.fg("muted", "  No saved Pi sessions"), innerWidth));
-    } else {
-      const { start, end } = visibleRange(this.selectedIndex, this.sessions.length, contentRows);
-      for (let index = start; index < end; index++) {
-        lines.push(this.sessionRow(this.sessions[index]!, index === this.selectedIndex, innerWidth));
-      }
+    const displayRows = this.getDisplayRows();
+    const selectedId = this.sessions[this.selectedIndex]?.id;
+    const selectedRowIndex = displayRows.findIndex((row) => row.type === "session" && row.session.id === selectedId);
+    const { start, end } = visibleRange(selectedRowIndex, displayRows.length, listRows);
+
+    for (let index = start; index < end; index++) {
+      const displayRow = displayRows[index]!;
+      lines.push(
+        displayRow.type === "section"
+          ? this.sectionRow(displayRow.label, displayRow.count, width)
+          : this.sessionRow(displayRow.session, displayRow.session.id === selectedId, width),
+      );
     }
+    while (lines.length < TOP_ROWS + listRows) lines.push(this.row("", width));
 
-    // Deliberately fill unused space: a board must feel like a workspace, not
-    // a small editor popup. The opaque rows also hide the underlying transcript.
-    while (lines.length < contentRows + 1) lines.push(this.row("", innerWidth));
-
-    lines.push(this.border("├", "┤", innerWidth));
-    lines.push(this.row(this.theme.fg("dim", this.helpLabel()), innerWidth));
-    lines.push(this.border("└", "┘", innerWidth));
+    lines.push(this.divider(width));
+    lines.push(this.inputRow(width));
+    lines.push(this.divider(width));
+    lines.push(this.row(this.theme.fg("dim", this.helpLabel()), width));
     return lines;
   }
 
@@ -87,56 +136,135 @@ export class SessionBoard implements Component {
     this.selectedIndex = Math.max(0, Math.min(this.sessions.length - 1, this.selectedIndex + delta));
   }
 
-  private headerLabel(): string {
-    const position = this.sessions.length === 0 ? "0 / 0" : `${this.selectedIndex + 1} / ${this.sessions.length}`;
-    return `┌─ ${this.theme.fg("accent", this.theme.bold("Sessions"))} ${this.theme.fg("dim", position)} `;
+  private runSelected(type: "open" | "pin" | "rename"): void {
+    const selected = this.sessions[this.selectedIndex];
+    if (selected) this.done({ type, id: selected.id });
   }
 
-  private helpLabel(): string {
-    return " ↑↓/jk select · Enter open · p pin · r rename · Esc close";
+  private getDisplayRows(): DisplayRow[] {
+    const groups: Array<{ label: string; sessions: PiSessionItem[] }> = [
+      { label: "Pinned", sessions: this.sessions.filter((session) => session.pinned) },
+      { label: "Working", sessions: this.sessions.filter((session) => !session.pinned && session.status === "working") },
+      {
+        label: "Awaiting input",
+        sessions: this.sessions.filter((session) => !session.pinned && session.status === "idle"),
+      },
+      { label: "Completed", sessions: this.sessions.filter((session) => !session.pinned && session.status === "done") },
+    ];
+
+    return groups.flatMap(({ label, sessions }) =>
+      sessions.length === 0
+        ? []
+        : ([{ type: "section", label, count: sessions.length }, ...sessions.map((session) => ({ type: "session", session }))] as DisplayRow[]),
+    );
+  }
+
+  private brandLine(): string {
+    return `  ${this.theme.fg("accent", "●")} ${this.theme.bold("Pi Agents View")} ${this.theme.fg("dim", "· SESSION BOARD")}`;
+  }
+
+  private workspaceLine(width: number): string {
+    const prefix = this.theme.fg("muted", "  Workspace  ");
+    const pathWidth = Math.max(1, width - visibleWidth(prefix) - 2);
+    return `${prefix}${truncateToWidth(this.meta.cwd, pathWidth)}`;
+  }
+
+  private summaryLine(): string {
+    const working = this.sessions.filter((session) => session.status === "working").length;
+    const waiting = this.sessions.filter((session) => session.status === "idle").length;
+    const completed = this.sessions.filter((session) => session.status === "done").length;
+    return [
+      this.theme.fg("dim", "  Sessions  "),
+      this.theme.fg("accent", `${working} working`),
+      this.theme.fg("muted", ` · ${waiting} awaiting input`),
+      this.theme.fg("success", ` · ${completed} completed`),
+    ].join("");
+  }
+
+  private sectionRow(label: string, count: number, width: number): string {
+    return this.row(`  ${this.theme.fg("muted", this.theme.bold(label))} ${this.theme.fg("dim", String(count))}`, width);
   }
 
   private sessionRow(session: PiSessionItem, selected: boolean, width: number): string {
-    const pointer = selected ? "> " : "  ";
-    const pin = session.pinned ? "📌 " : "   ";
-    const status = statusDisplay(session.status, this.theme);
-    const prefix = `${pointer}${pin}${status.symbol} `;
-    const nameWidth = Math.max(1, width - visibleWidth(prefix) - visibleWidth(status.label) - 1);
-    const content = `${prefix}${truncateToWidth(session.name, nameWidth)} ${status.label}`;
-    return this.row(content, width, selected);
+    const pointer = selected ? this.theme.fg("accent", "> ") : "  ";
+    const pin = session.pinned ? this.theme.fg("accent", "◆ ") : "  ";
+    const status = statusSymbol(session.status, this.theme);
+    const prefix = `  ${pointer}${pin}${status} `;
+    const age = relativeAge(session.updatedAt);
+    const project = projectName(session.cwd);
+    const detail = width >= 64 ? `${project}  ${age}` : age;
+    const nameWidth = Math.max(1, width - visibleWidth(prefix) - visibleWidth(detail) - 4);
+    const name = truncateToWidth(session.name, nameWidth);
+    const gap = " ".repeat(Math.max(2, width - visibleWidth(prefix) - visibleWidth(name) - visibleWidth(detail) - 2));
+    return this.row(`${prefix}${name}${gap}${this.theme.fg("dim", detail)}`, width, selected);
   }
 
-  private border(left: string, right: string, innerWidth: number): string {
-    const labelWidth = visibleWidth(left) + visibleWidth(right);
-    const line = `${left}${"─".repeat(Math.max(0, innerWidth + 2 - labelWidth))}${right}`;
-    return this.theme.bg("customMessageBg", line);
+  private inputRow(width: number): string {
+    const prefix = `  ${this.theme.fg("accent", "›")} `;
+    const availableWidth = Math.max(1, width - visibleWidth(prefix) - 2);
+    const typed = truncateToWidth(this.prompt, availableWidth);
+    const placeholder = this.theme.fg("muted", "Describe a task to start a new session");
+    const beforeCursor = typed ? `${prefix}${typed}` : prefix;
+    const afterCursor = typed ? "" : placeholder;
+    const cursor = this.focused ? CURSOR_MARKER : "";
+    return this.row(`${beforeCursor}${cursor}${afterCursor}`, width);
   }
 
-  private row(content: string, innerWidth: number, selected = false): string {
-    const line = `│${pad(content, innerWidth)}│`;
-    return this.theme.bg(selected ? "selectedBg" : "customMessageBg", line);
+  private divider(width: number): string {
+    return this.theme.bg("customMessageBg", "─".repeat(width));
+  }
+
+  private helpLabel(): string {
+    return "  Enter starts task · empty Enter opens selection · ↑↓ select · Alt-P pin · Alt-R rename · Esc close";
+  }
+
+  private row(content: string, width: number, selected = false): string {
+    return this.theme.bg(selected ? "selectedBg" : "customMessageBg", pad(content, width));
   }
 }
 
-function statusDisplay(status: PiSessionItem["status"], theme: Theme): { symbol: string; label: string } {
+function statusSymbol(status: PiSessionItem["status"], theme: Theme): string {
   switch (status) {
     case "working":
-      return { symbol: theme.fg("accent", "●"), label: theme.fg("accent", "working") };
+      return theme.fg("accent", "●");
     case "idle":
-      return { symbol: theme.fg("muted", "○"), label: theme.fg("muted", "idle") };
+      return theme.fg("muted", "○");
     case "done":
-      return { symbol: theme.fg("success", "✓"), label: theme.fg("success", "done") };
+      return theme.fg("success", "·");
   }
 }
 
-function visibleRange(selectedIndex: number, count: number, maxRows: number): { start: number; end: number } {
+function visibleRange(selectedRowIndex: number, count: number, maxRows: number): { start: number; end: number } {
   if (count <= maxRows) return { start: 0, end: count };
-  const start = Math.max(0, Math.min(selectedIndex - Math.floor(maxRows / 2), count - maxRows));
+  const selected = selectedRowIndex < 0 ? 0 : selectedRowIndex;
+  const start = Math.max(0, Math.min(selected - Math.floor(maxRows / 2), count - maxRows));
   return { start, end: start + maxRows };
 }
 
+function printableInput(data: string): string {
+  // Escape sequences and other terminal control input are handled above, not
+  // inserted into the task prompt. Pasted newlines become spaces.
+  if (/\x1b|[\u0000-\u0008\u000e-\u001f\u007f]/.test(data)) return "";
+  return data.replace(/[\r\n\t]+/g, " ");
+}
+
+function projectName(cwd: string): string {
+  const parts = cwd.split("/").filter(Boolean);
+  return parts.at(-1) || cwd;
+}
+
+function relativeAge(timestamp: number): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1_000));
+  if (seconds < 60) return "now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
 function narrowPanel(width: number, height: number): string[] {
-  const title = truncateToWidth("Sessions — terminal too narrow", width);
+  const title = truncateToWidth("Pi Agents View — terminal too narrow", width);
   return Array.from({ length: height }, (_, index) => (index === 0 ? title : " ".repeat(width)));
 }
 
