@@ -110,7 +110,7 @@ export class SessionClaimRegistry {
         released = true;
         const current = await readOwner(claimPath);
         if (!current || current.token !== owner.token || current.managerPid !== owner.managerPid) return;
-        await rm(claimPath, { force: true });
+        await removeClaimPath(claimPath);
       },
     };
   }
@@ -155,7 +155,7 @@ async function tryReapClaim(claimPath: string, observed: ClaimOwner): Promise<vo
   if (!(await tryAtomicCreate(markerPath, reaper))) return;
   try {
     const current = await readOwner(claimPath);
-    if (current?.token === observed.token && !ownerIsAlive(current)) await rm(claimPath, { force: true });
+    if (current?.token === observed.token && !ownerIsAlive(current)) await removeClaimPath(claimPath);
   } finally {
     await releaseInitialReaper(markerPath, reaper);
   }
@@ -167,7 +167,7 @@ async function tryReapMalformedClaim(claimPath: string): Promise<void> {
   if (!(await tryAtomicCreate(markerPath, reaper))) return;
   try {
     if (!(await readOwner(claimPath)) && (await ageMs(claimPath)) >= MALFORMED_CLAIM_GRACE_MS) {
-      await rm(claimPath, { force: true });
+      await removeClaimPath(claimPath);
     }
   } finally {
     await releaseInitialReaper(markerPath, reaper);
@@ -202,7 +202,7 @@ async function recoverOrWaitForReaper(claimPath: string): Promise<boolean> {
   try {
     const current = await readOwner(claimPath);
     if ((current && !ownerIsAlive(current)) || (!current && (await ageMs(claimPath)) >= MALFORMED_CLAIM_GRACE_MS)) {
-      await rm(claimPath, { force: true });
+      await removeClaimPath(claimPath);
     }
   } finally {
     await rm(takeoverPath, { force: true });
@@ -223,7 +223,16 @@ async function releaseInitialReaper(path: string, owner: ReaperOwner): Promise<v
 
 async function readOwner(path: string): Promise<ClaimOwner | undefined> {
   try {
-    const value = JSON.parse(await readFile(path, "utf8")) as Partial<ClaimOwner> & { pid?: unknown };
+    let raw: string;
+    try {
+      raw = await readFile(path, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EISDIR") throw error;
+      // Initial releases stored claims as directories. Honor their live owner
+      // until that older Pi process exits, then reap them through the same path.
+      raw = await readFile(join(path, "owner.json"), "utf8");
+    }
+    const value = JSON.parse(raw) as Partial<ClaimOwner> & { pid?: unknown };
     const managerPid = typeof value.managerPid === "number" ? value.managerPid : value.pid;
     if (
       typeof managerPid !== "number" ||
@@ -286,6 +295,10 @@ function isProcessAlive(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+async function removeClaimPath(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true });
 }
 
 async function ageMs(path: string): Promise<number> {

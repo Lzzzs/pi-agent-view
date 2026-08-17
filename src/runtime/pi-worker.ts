@@ -3,7 +3,13 @@ import { StringDecoder } from "node:string_decoder";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getPackageDir, type RpcExtensionUIRequest, type RpcResponse, type RpcSessionState } from "@earendil-works/pi-coding-agent";
+import {
+  getPackageDir,
+  type RpcExtensionUIRequest,
+  type RpcResponse,
+  type RpcSessionState,
+  type SessionStats,
+} from "@earendil-works/pi-coding-agent";
 import {
   responseData,
   type RpcCommandBody,
@@ -87,6 +93,10 @@ export class PiRpcWorker implements WorkerClient {
   async getMessages(): Promise<unknown[]> {
     const data = responseData<{ messages: unknown[] }>(await this.request({ type: "get_messages" }));
     return data.messages;
+  }
+
+  async getSessionStats(): Promise<SessionStats> {
+    return responseData<SessionStats>(await this.request({ type: "get_session_stats" }));
   }
 
   async shutdown(): Promise<void> {

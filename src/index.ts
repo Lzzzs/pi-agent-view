@@ -269,11 +269,13 @@ async function attachRuntimeView(
   let view: RuntimeView | undefined;
   try {
     await ctx.ui.custom<RuntimeViewAction>(
-      (tui, theme, _keybindings, done) => {
+      (tui, theme, keybindings, done) => {
         view = new RuntimeView(
           runtime,
           sessionName,
           theme,
+          tui,
+          keybindings,
           done,
           () => tui.requestRender(),
           () => tui.terminal.rows,

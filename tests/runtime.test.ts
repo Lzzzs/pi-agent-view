@@ -34,9 +34,13 @@ test("detach preserves a working runtime and its session identity", async () => 
   const runtime = createRuntime(cwd, "session-a");
   try {
     await runtime.start();
+    const external = runtime.getSnapshot();
+    if (external.state) external.state.sessionId = "mutated-outside-runtime";
+    assert.equal(runtime.getSnapshot().state?.sessionId, "session-a");
     await runtime.attach();
     await runtime.send("long task");
     assert.equal(runtime.status, "working");
+    assert.match(JSON.stringify(runtime.getSnapshot().streamingMessage), /working:session-a/);
     assert.equal(runtime.getSnapshot().attached, true);
 
     await runtime.detach();
@@ -54,6 +58,21 @@ test("detach preserves a working runtime and its session identity", async () => 
   }
 });
 
+test("streamed tool-call argument deltas are reconstructed", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-agents-view-tool-delta-"));
+  const runtime = createRuntime(cwd, "session-tool-delta");
+  try {
+    await runtime.start();
+    await runtime.send("stream-tool-args");
+    const serialized = JSON.stringify(runtime.getSnapshot().streamingMessage);
+    assert.match(serialized, /call-x/);
+    assert.match(serialized, /\"path\":\"x\"/);
+  } finally {
+    await runtime.shutdown();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("a fast settled agent error remains failed after send reads state", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "pi-agents-view-agent-error-"));
   const runtime = createRuntime(cwd, "session-error");
@@ -62,6 +81,108 @@ test("a fast settled agent error remains failed after send reads state", async (
     await runtime.send("agent-error");
     assert.equal(runtime.status, "failed");
     assert.match(runtime.getSnapshot().error ?? "", /synthetic agent failure/);
+  } finally {
+    await runtime.shutdown();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("parallel tool results with the same timestamp are not deduplicated", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-agents-view-tool-results-"));
+  const runtime = createRuntime(cwd, "session-tool-results");
+  try {
+    await runtime.start();
+    await runtime.send("parallel-results");
+    const results = runtime
+      .getSnapshot()
+      .messages.filter((message) => message && typeof message === "object" && (message as { role?: unknown }).role === "toolResult");
+    assert.equal(results.length, 2);
+  } finally {
+    await runtime.shutdown();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("same-role messages with the same timestamp remain distinct", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-agents-view-same-timestamp-"));
+  const runtime = createRuntime(cwd, "session-same-timestamp");
+  try {
+    await runtime.start();
+    await runtime.send("same-timestamp-users");
+    const serialized = JSON.stringify(runtime.getSnapshot().messages);
+    assert.match(serialized, /queued-a/);
+    assert.match(serialized, /queued-b/);
+  } finally {
+    await runtime.shutdown();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("successful compaction reloads the authoritative message snapshot", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-agents-view-compaction-"));
+  const runtime = createRuntime(cwd, "session-compaction");
+  try {
+    await runtime.start();
+    await runtime.send("compact");
+    await delay(100);
+    const snapshot = runtime.getSnapshot();
+    assert.equal(snapshot.state?.isCompacting, false);
+    assert.equal(snapshot.messages.length, 1);
+    assert.match(JSON.stringify(snapshot.messages), /compacted transcript/);
+  } finally {
+    await runtime.shutdown();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("compaction refresh cannot overwrite newer post-compaction messages", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-agents-view-compaction-race-"));
+  const runtime = createRuntime(cwd, "session-compaction-race", 20);
+  try {
+    await runtime.start();
+    await runtime.send("compact-race");
+    await runtime.send("fast-after-compaction");
+    await delay(250);
+    const serialized = JSON.stringify(runtime.getSnapshot().messages);
+    assert.match(serialized, /compacted transcript/);
+    assert.match(serialized, /fast-after-compaction-complete/);
+  } finally {
+    await runtime.shutdown();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("messages submitted during compaction queue and flush afterward", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-agents-view-compaction-queue-"));
+  const runtime = createRuntime(cwd, "session-compaction-queue", 30);
+  try {
+    await runtime.start();
+    await runtime.send("slow-compact");
+    assert.equal(runtime.getSnapshot().state?.isCompacting, true);
+    await runtime.send("queued-during-compaction");
+    assert.match(JSON.stringify(runtime.getSnapshot().pendingMessages), /queued-during-compaction/);
+    await delay(300);
+    const snapshot = runtime.getSnapshot();
+    assert.equal(snapshot.pendingMessages.steering.length, 0);
+    assert.match(JSON.stringify(snapshot.messages), /done:session-compaction-queue/);
+  } finally {
+    await runtime.shutdown();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a failed compaction-queue flush preserves every queued message", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-agents-view-compaction-queue-failure-"));
+  const runtime = createRuntime(cwd, "session-compaction-queue-failure", 30);
+  try {
+    await runtime.start();
+    await runtime.send("slow-compact");
+    await runtime.send("reject-queued");
+    await runtime.send("still-queued");
+    await delay(180);
+    const pending = JSON.stringify(runtime.getSnapshot().pendingMessages);
+    assert.match(pending, /reject-queued/);
+    assert.match(pending, /still-queued/);
   } finally {
     await runtime.shutdown();
     await rm(cwd, { recursive: true, force: true });
@@ -124,6 +245,16 @@ test("session claims reject a second writer and release cleanly", async () => {
   );
   await assert.rejects(secondRegistry.acquire(childOwnedId), SessionOwnedError);
   await rm(childOwnedPath, { force: true });
+
+  const legacyId = "legacy-directory-claim";
+  const legacyPath = join(cwd, "claims", `${createHash("sha256").update(legacyId).digest("hex")}.claim`);
+  await mkdir(legacyPath);
+  await writeFile(
+    join(legacyPath, "owner.json"),
+    JSON.stringify({ pid: process.pid, token: randomUUID(), sessionId: legacyId, createdAt: Date.now() }),
+  );
+  await assert.rejects(secondRegistry.acquire(legacyId), SessionOwnedError);
+  await rm(legacyPath, { recursive: true, force: true });
 
   const staleId = "stale-reaper-session";
   const staleToken = randomUUID();

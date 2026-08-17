@@ -19,6 +19,7 @@ see session status → type a new task or resume a session → work → ← → 
 - No browser, HTTP server, desktop app, PTY scraping, or transcript copying
 - One isolated `pi --mode rpc` worker per background session
 - Structured Pi RPC commands and live agent/message/tool/lifecycle events
+- Background attach view reuses Pi's native Markdown, user/assistant message, tool, bash, editor, theme, spinner, and footer conventions
 - Keyboard-first navigation with an always-ready task input
 - Persistent pins and display-name overrides
 - Lifecycle-backed `starting` / `working` / `idle` / `failed` states
@@ -95,6 +96,8 @@ Press `Esc` to close it and return to the current session. Open it again at any 
 | `Alt+R` | Rename the selected session |
 | `Esc` | Close the board |
 | `←` / `Ctrl+←` | Detach to the Board when the editor is empty, including while Pi is working |
+| `PageUp` / `PageDown` | Scroll an attached background transcript |
+| `Ctrl+O` | Expand or collapse attached tool output |
 
 Pins, custom names, selection, and lightweight runtime records are stored in
 `~/.pi/agents-view/state.json`. Existing state from the earlier
@@ -116,7 +119,7 @@ session data.
       working     working       idle
 ```
 
-A background session owns one isolated Pi RPC child process and one session JSONL file. The attach view consumes `get_messages` plus live RPC events; sending input uses `prompt` and uses steering semantics when the worker is already running.
+A background session owns one isolated Pi RPC child process and one session JSONL file. The attach view consumes `get_messages` plus live RPC events; sending input uses `prompt` and steering semantics when the worker is already running. Its data source is custom, but its visual building blocks are Pi's public native components, including Markdown/thinking blocks, user message boxes, built-in tool renderers, bash output, the multiline editor, working indicator, model/context footer, and theme colors.
 
 `detach()` only releases the terminal view. It does **not** call RPC `abort`, send a signal, clear queues, or dispose the worker. Workers are stopped when the owning Pi process quits; V1 does not install a daemon.
 

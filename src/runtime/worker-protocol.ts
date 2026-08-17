@@ -3,6 +3,7 @@ import type {
   RpcExtensionUIRequest,
   RpcResponse,
   RpcSessionState,
+  SessionStats,
 } from "@earendil-works/pi-coding-agent";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, Extract<keyof T, K>> : never;
@@ -24,6 +25,7 @@ export interface WorkerClient {
   prompt(message: string, streamingBehavior?: "steer" | "followUp"): Promise<void>;
   getState(): Promise<RpcSessionState>;
   getMessages(): Promise<unknown[]>;
+  getSessionStats(): Promise<SessionStats>;
   onEvent(listener: (event: WorkerProtocolEvent) => void): () => void;
   shutdown(): Promise<void>;
 }
