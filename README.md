@@ -68,8 +68,8 @@ Press `Esc` to close it and return to the current session. Open it again at any 
 ```text
   ███   Pi Agents View · SESSION BOARD
   █ █   Workspace  /Users/me/code/project
-   ███  Sessions   1 working · 2 awaiting input · 18 completed
-  ██ █
+  ██ █  Sessions   1 working · 2 awaiting input · 18 completed
+  █  █
 
   Pinned  1
   > ◆ ● recorder-multi-tab                         project  now
