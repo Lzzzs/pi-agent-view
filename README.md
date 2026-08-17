@@ -72,12 +72,12 @@ Press `Esc` to close it and return to the current session. Open it again at any 
   █▀ █  Workspace  /Users/me/code/project
         Sessions   1 working · 2 awaiting input · 18 completed
 
-    ▾ Pinned  1
-  >   recorder-multi-tab              ● working  project  now
-    ▾ Working  1
-      eslint-fix                       ● working  project  2m
-    ▾ Completed  18
-      qianfan-config                   · done     project  1h
+▾ Pinned  1
+  recorder-multi-tab                  ● working  project  now
+▾ Working  1
+  eslint-fix                           ● working  project  2m
+▾ Completed  18
+  qianfan-config                       · done     project  1h
 ────────────────────────────────────────────────────────────────
   › Describe a task to start a new session
 ────────────────────────────────────────────────────────────────

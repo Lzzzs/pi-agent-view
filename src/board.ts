@@ -227,17 +227,17 @@ export class SessionBoard implements Component {
   }
 
   private sectionRow(section: Extract<DisplayRow, { type: "section" }>, selected: boolean, width: number): string {
-    const pointer = selected ? this.theme.fg("accent", ">") : " ";
-    const disclosure = section.expanded ? "▾" : "▸";
-    const content = `  ${pointer} ${this.theme.fg("muted", disclosure)} ${this.theme.fg("muted", this.theme.bold(section.label))} ${this.theme.fg("dim", String(section.count))}`;
+    const disclosure = this.theme.fg(selected ? "accent" : "muted", section.expanded ? "▾" : "▸");
+    // Disclosure starts at column zero. Its label therefore aligns exactly with
+    // every session name below (both start in column two).
+    const content = `${disclosure} ${this.theme.fg("muted", this.theme.bold(section.label))} ${this.theme.fg("dim", String(section.count))}`;
     return this.row(content, width, selected);
   }
 
   private sessionRow(session: PiSessionItem, selected: boolean, width: number): string {
-    // The session title starts in precisely the same column as the section
-    // label above it; its status belongs in the right-hand metadata column.
-    const pointer = selected ? this.theme.fg("accent", ">") : " ";
-    const prefix = `  ${pointer}   `;
+    // Keep session titles on the same left edge as their group labels. The
+    // selected marker replaces the otherwise blank two-cell session prefix.
+    const prefix = selected ? `${this.theme.fg("accent", ">")} ` : "  ";
     const status = statusDisplay(session.status, this.theme);
     const age = relativeAge(session.updatedAt);
     const project = projectName(session.cwd);
